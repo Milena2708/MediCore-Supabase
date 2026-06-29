@@ -1,157 +1,223 @@
 // ══════════════════════════════════════════
-//  reportes.js — Métricas y Analítica Clínica
-//  Conectado a Supabase Database (supabaseClient)
+//  reportes.js — Analítica y Dashboards Clínicos
+//  Conectado a Supabase y acoplado a reportes.html
 // ══════════════════════════════════════════
 
 document.addEventListener('DOMContentLoaded', async () => {
-  await inicializarModuloReportes();
+  await generarReporte();
 });
 
-async function inicializarModuloReportes() {
-  // 1. Descargar toda la data histórica de la nube en paralelo
+async function generarReporte() {
+  // 1. Descargar toda la información de la nube
   const { data: citas } = await supabaseClient.from('citas').select('*');
   const { data: pacientes } = await supabaseClient.from('pacientes').select('*');
   const { data: historiales } = await supabaseClient.from('historial_consultas').select('*');
 
-  if (!citas || !pacientes) {
-    showToast('Error al cargar datos para reportes', 'error');
+  if (!citas || !pacientes || !historiales) {
+    showToast('Error al conectar y descargar analíticas', 'error');
     return;
   }
 
-  // 2. Procesar y renderizar cada sección del cuadro de mando
-  calcularKpisGlobales(citas, pacientes, historiales);
-  renderGraficoEspecialidades(citas);
-  renderTablaEficienciaMedicos(citas, historiales);
-  renderDistribucionPrioridades(citas);
+  // 2. Ejecutar renderizado modular
+  renderKpisSuperiores(citas, pacientes, historiales);
+  renderCitasPorEspecialidad(citas);
+  renderRankingMedicos(citas);
+  renderCitasPorPrioridad(citas);
+  renderTopPacientes(citas, pacientes);
+  renderAlergiasFrecuentes(pacientes);
+  renderTablaDetalle(citas, pacientes);
 }
 
-// ── 1. CÁLCULO DE KPIS Y TARJETAS DE INDICADORES ──────────────────────
-function calcularKpisGlobales(citas, pacientes, historiales) {
-  const totalCitas = citas.length;
-  
-  // Tasa de Asistencia = (Atendidas / (Total - Canceladas)) * 100
-  const validas = citas.filter(c => c.estado !== 'Cancelada').length;
+// ── 1. RENDERIZAR LAS TARJETAS KPI SUPERIORES ─────────────────────────
+function renderKpisSuperiores(citas, pacientes, historiales) {
   const atendidas = citas.filter(c => c.estado === 'Atendida').length;
-  const tasaAsistencia = validas > 0 ? Math.round((atendidas / validas) * 100) : 0;
+  const programadas = citas.filter(c => c.estado === 'Programada' || c.estado === 'Confirmada').length;
+  const canceladasNoAsistio = citas.filter(c => ['Cancelada', 'No asistió'].includes(c.estado)).length;
 
-  // Pacientes críticos (con alertas de alergias activas)
-  const criticos = pacientes.filter(p => p.alergias && p.alergias.length > 0 && p.alergias[0] !== 'Ninguna').length;
-
-  // Ticket Promedio de Atención Recetada
-  const conMeds = historiales ? historiales.filter(h => h.medicamentos && h.medicamentos.length > 0).length : 0;
-
-  // Inyectar en los IDs de tus tarjetas de reporte
-  if (document.getElementById('rep-total-citas')) document.getElementById('rep-total-citas').textContent = totalCitas;
-  if (document.getElementById('rep-tasa-asistencia')) document.getElementById('rep-tasa-asistencia').textContent = `${tasaAsistencia}%`;
-  if (document.getElementById('rep-pacs-criticos')) document.getElementById('rep-pacs-criticos').textContent = criticos;
-  if (document.getElementById('rep-con-receta')) document.getElementById('rep-con-receta').textContent = conMeds;
+  if (document.getElementById('kpi-pacs')) document.getElementById('kpi-pacs').textContent = pacientes.length;
+  if (document.getElementById('kpi-atendidas')) document.getElementById('kpi-atendidas').textContent = atendidas;
+  if (document.getElementById('kpi-programadas')) document.getElementById('kpi-programadas').textContent = programadas;
+  if (document.getElementById('kpi-canceladas')) document.getElementById('kpi-canceladas').textContent = canceladasNoAsistio;
+  if (document.getElementById('kpi-hist')) document.getElementById('kpi-hist').textContent = historiales.length;
 }
 
-// ── 2. GRÁFICO / BARRAS DE ESPECIALIDADES MÁS DEMANDADAS ──────────────
-function renderGraficoEspecialidades(citas) {
-  const container = document.getElementById('rep-especialidades-list');
+// ── 2. GRÁFICO MANUAL DE BARRAS: CITAS POR ESPECIALIDAD ───────────────
+function renderCitasPorEspecialidad(citas) {
+  const container = document.getElementById('chart-especialidades');
   if (!container) return;
 
-  // Contar frecuencias por especialidad
   const conteo = {};
-  citas.forEach(c => {
-    conteo[c.especialidad] = (conteo[c.especialidad] || 0) + 1;
-  });
+  citas.forEach(c => conteo[c.especialidad] = (conteo[c.especialidad] || 0) + 1);
 
   const total = citas.length || 1;
   const ordenado = Object.entries(conteo).sort((a, b) => b[1] - a[1]);
 
-  if (ordenado.length === 0) {
-    container.innerHTML = '<div style="font-size:.8rem;color:var(--gray-400)">Sin datos de especialidades</div>';
-    return;
-  }
-
-  // Generar barras estéticas utilizando CSS vanilla basado en porcentajes
   container.innerHTML = ordenado.map(([esp, cant]) => {
     const pct = Math.round((cant / total) * 100);
     return `
-      <div style="margin-bottom: .85rem;">
-        <div style="display:flex; justify-content:space-between; font-size:.8rem; margin-bottom:.25rem;">
-          <span style="font-weight:600; color:var(--gray-700)">${esp}</span>
-          <span style="color:var(--gray-500)">${cant} citas (${pct}%)</span>
+      <div class="bar-row">
+        <div class="bar-label">${esp}</div>
+        <div class="bar-track">
+          <div class="bar-fill" style="width: ${pct}%; background: var(--blue);"></div>
         </div>
-        <div style="width:100%; height:8px; background:var(--gray-100); border-radius:4px; overflow:hidden;">
-          <div style="width:${pct}%; height:100%; background:var(--blue); border-radius:4px;"></div>
-        </div>
-      </div>
-    `;
+        <div class="bar-val">${cant} <span style="font-size:10px;font-weight:400;color:var(--gray-400)">(${pct}%)</span></div>
+      </div>`;
   }).join('');
 }
 
-// ── 3. TABLA DE EFICIENCIA OPERATIVA POR MÉDICO ────────────────────────
-function renderTablaEficienciaMedicos(citas, historiales) {
-  const tbody = document.getElementById('rep-tabla-medicos-body');
-  if (!tbody) return;
+// ── 3. RANKING DE MÉDICOS CON MEDALLAS (ESTILOS COMPLETO) ─────────────
+function renderRankingMedicos(citas) {
+  const container = document.getElementById('chart-medicos');
+  if (!container) return;
 
-  // Agrupar métricas por cada médico
-  const medicosData = {};
+  const conteo = {};
+  citas.filter(c => c.estado === 'Atendida').forEach(c => conteo[c.medico] = (conteo[c.medico] || 0) + 1);
 
-  citas.forEach(c => {
-    if (!medicosData[c.medico]) {
-      medicosData[c.medico] = { nombre: c.medico, especialidad: c.especialidad, total: 0, atendidas: 0, canceladas: 0 };
-    }
-    medicosData[c.medico].total++;
-    if (c.estado === 'Atendida') medicosData[c.medico].atendidas++;
-    if (c.estado === 'Cancelada') medicosData[c.medico].canceladas++;
-  });
+  const ordenado = Object.entries(conteo).sort((a, b) => b[1] - a[1]).slice(0, 5);
 
-  const filas = Object.values(medicosData).sort((a, b) => b.atendidas - a.atendidas);
-
-  if (filas.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:var(--gray-400)">No hay registros médicos activos</td></tr>';
+  if (ordenado.length === 0) {
+    container.innerHTML = '<div class="empty-state" style="padding:1rem;font-size:.8rem;">Sin consultas finalizadas aún</div>';
     return;
   }
 
-  tbody.innerHTML = filas.map(m => {
-    const rendimiento = m.total > 0 ? Math.round((m.atendidas / m.total) * 100) : 0;
-    let rankClass = rendimiento >= 75 ? 'badge-espera' : rendimiento >= 40 ? 'badge-atencion' : 'badge-noasistio';
-    
+  const medallas = ['gold', 'silver', 'bronze'];
+
+  container.innerHTML = ordenado.map(([medico, cant], index) => {
+    const posClass = medallas[index] ? medallas[index] : '';
     return `
-      <tr>
-        <td><strong>${m.nombre}</strong><br><small style="color:var(--gray-400)">${m.especialidad}</small></td>
-        <td style="text-align:center">${m.total}</td>
-        <td style="text-align:center;color:var(--green);font-weight:600">${m.atendidas}</td>
-        <td style="text-align:right">
-          <span class="badge ${rankClass}">${rendimiento}% Eficacia</span>
-        </td>
-      </tr>
-    `;
+      <div class="rank-item">
+        <div class="rank-pos ${posClass}">${index + 1}</div>
+        <div class="rank-name">${medico}</div>
+        <div class="rank-val">${cant} Atenciones</div>
+      </div>`;
   }).join('');
 }
 
-// ── 4. PANEL DE DISTRIBUCIÓN DE PRIORIDADES DE ATENCIÓN ────────────────
-function renderDistribucionPrioridades(citas) {
-  const pEl = document.getElementById('rep-prioridades-container');
-  if (!pEl) return;
+// ── 4. BARRAS MANUALES: CITAS POR PRIORIDAD ───────────────────────────
+function renderCitasPorPrioridad(citas) {
+  const container = document.getElementById('chart-prioridades');
+  if (!container) return;
 
-  const urgentes = citas.filter(c => c.prioridad === 'Urgente').length;
-  const preferenciales = citas.filter(c => c.prioridad === 'Preferencial').length;
-  const normales = citas.filter(c => c.prioridad === 'Normal').length;
+  const conteo = { Urgente: 0, Preferencial: 0, Normal: 0 };
+  citas.forEach(c => { if (conteo[c.prioridad] !== undefined) conteo[c.prioridad]++; });
+
   const total = citas.length || 1;
+  const colores = { Urgente: 'var(--red)', Preferencial: 'var(--orange)', Normal: 'var(--blue-light)' };
 
-  pEl.innerHTML = `
-    <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:.5rem; text-align:center;">
-      <div style="background:var(--red-pale); padding:.75rem; border-radius:var(--radius)">
-        <div style="font-size:1.25rem; font-weight:800; color:var(--red)">${urgentes}</div>
-        <div style="font-size:.65rem; text-transform:uppercase; color:var(--red); font-weight:700">Urgentes</div>
-        <div style="font-size:.65rem; color:var(--gray-400)">${Math.round((urgentes/total)*100)}%</div>
-      </div>
-      <div style="background:var(--orange-pale); padding:.75rem; border-radius:var(--radius)">
-        <div style="font-size:1.25rem; font-weight:800; color:var(--orange)">${preferenciales}</div>
-        <div style="font-size:.65rem; text-transform:uppercase; color:var(--orange); font-weight:700">Preferencial</div>
-        <div style="font-size:.65rem; color:var(--gray-400)">${Math.round((preferenciales/total)*100)}%</div>
-      </div>
-      <div style="background:var(--blue-pale); padding:.75rem; border-radius:var(--radius)">
-        <div style="font-size:1.25rem; font-weight:800; color:var(--blue)">${normales}</div>
-        <div style="font-size:.65rem; text-transform:uppercase; color:var(--blue); font-weight:700">Normal</div>
-        <div style="font-size:.65rem; color:var(--gray-400)">${Math.round((normales/total)*100)}%</div>
-      </div>
-    </div>
-  `;
+  container.innerHTML = Object.entries(conteo).map(([prio, cant]) => {
+    const pct = Math.round((cant / total) * 100);
+    return `
+      <div class="bar-row">
+        <div class="bar-label">${prio}</div>
+        <div class="bar-track">
+          <div class="bar-fill" style="width: ${pct}%; background: ${colores[prio]};"></div>
+        </div>
+        <div class="bar-val">${cant} <span style="font-size:10px;font-weight:400;color:var(--gray-400)">(${pct}%)</span></div>
+      </div>`;
+  }).join('');
 }
+
+// ── 5. TOP PACIENTES CON MÁS CONSULTAS (BARRA LATERAL) ────────────────
+function renderTopPacientes(citas, pacientes) {
+  const container = document.getElementById('chart-top-pacs');
+  if (!container) return;
+
+  const conteo = {};
+  citas.forEach(c => conteo[c.paciente_id] = (conteo[c.paciente_id] || 0) + 1);
+
+  const ordenado = Object.entries(conteo).sort((a, b) => b[1] - a[1]).slice(0, 4);
+
+  container.innerHTML = ordenado.map(([pacId, cant], index) => {
+    const pac = pacientes.find(p => p.codigo === pacId);
+    const nombre = pac ? `${pac.nombres} ${pac.apellidos}` : 'Paciente Clínico';
+    return `
+      <div class="rank-item">
+        <div class="rank-pos">${index + 1}</div>
+        <div class="rank-name">${nombre} <br><small style="color:var(--gray-400);font-weight:400;">Código: ${pacId}</small></div>
+        <div class="rank-val">${cant} Citas</div>
+      </div>`;
+  }).join('');
+}
+
+// ── 6. GRÁFICO DE ALERGIAS MÁS FRECUENTES (INGENIERÍA CLÍNICA) ────────
+function renderAlergiasFrecuentes(pacientes) {
+  const container = document.getElementById('chart-alergias');
+  if (!container) return;
+
+  const conteo = {};
+  let totalPacientesConAlergia = 0;
+
+  pacientes.forEach(p => {
+    if (p.alergias && p.alergias.length > 0 && p.alergias[0] !== 'Ninguna') {
+      totalPacientesConAlergia++;
+      p.alergias.forEach(al => {
+        conteo[al] = (conteo[al] || 0) + 1;
+      });
+    }
+  });
+
+  const ordenado = Object.entries(conteo).sort((a, b) => b[1] - a[1]).slice(0, 4);
+  const totalDivisor = totalPacientesConAlergia || 1;
+
+  if (ordenado.length === 0) {
+    container.innerHTML = '<div class="empty-state" style="padding:1rem;font-size:.8rem;">No se registran pacientes con alergias activas</div>';
+    return;
+  }
+
+  container.innerHTML = ordenado.map(([alergia, cant]) => {
+    const pct = Math.round((cant / totalDivisor) * 100);
+    return `
+      <div class="bar-row">
+        <div class="bar-label" style="min-width:110px">${alergia}</div>
+        <div class="bar-track">
+          <div class="bar-fill" style="width: ${pct}%; background: #EF4444;"></div>
+        </div>
+        <div class="bar-val">${cant} pacs</div>
+      </div>`;
+  }).join('');
+}
+
+// ── 7. DETALLE DE LA TABLA COMPLETA INFERIOR (HISTORIAL DE CITAS) ─────
+async function renderTablaDetalle(citasFiltradas = null, pacientesLista = null) {
+  const tbody = document.getElementById('tbody-reporte');
+  if (!tbody) return;
+
+  const citas = citasFiltradas || (await supabaseClient.from('citas').select('*')).data;
+  const pacientes = pacientesLista || (await supabaseClient.from('pacientes').select('*')).data;
+
+  const q = (document.getElementById('r-buscar').value || '').toLowerCase();
+  const fEstado = document.getElementById('r-estado-tabla').value;
+
+  if (!citas) return;
+
+  let filtradas = citas.filter(c => {
+    const pac = pacientes ? pacientes.find(p => p.codigo === c.paciente_id) : null;
+    const nombre = pac ? `${pac.nombres} ${pac.apellidos}`.toLowerCase() : '';
+
+    if (q && !nombre.includes(q) && !c.medico.toLowerCase().includes(q) && !c.codigo.toLowerCase().includes(q)) return false;
+    if (fEstado && c.estado !== fEstado) return false;
+    return true;
+  });
+
+  if (filtradas.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--gray-400)">No se encontraron registros coincidentes</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = filtradas.map(c => {
+    const pac = pacientes ? pacientes.find(p => p.codigo === c.paciente_id) : null;
+    const nombre = pac ? `${pac.nombres} ${pac.apellidos}` : '(Paciente no encontrado)';
+    
+    return `
+      <tr>
+        <td><strong>${c.codigo}</strong></td>
+        <td>${nombre}</td>
+        <td>${c.medico}</td>
+        <td>${c.especialidad}</td>
+        <td>${formatDate(c.fecha)}</td>
+        <td>${c.hora}</td>
+        <td><span class="badge badge-${c.estado.toLowerCase().replace(/ /g, '')}">${c.estado}</span></td>
+        <td><span class="badge badge-${c.prioridad.toLowerCase()}">${c.prioridad}</span></td>
+      </tr>`;
+  }).join('');
 }

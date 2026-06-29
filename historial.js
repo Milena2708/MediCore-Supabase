@@ -21,7 +21,7 @@ async function inicializarModuloHistorial() {
   await updateStatsHistorial();
 }
 
-// ── 1. RENDER DE LA BARRA LATERAL (CITAS ATENDIDAS) ───────────────────
+
 // ── 1. RENDER DE LA BARRA LATERAL (CITAS ATENDIDAS) ───────────────────
 async function renderCitasAtendidas() {
   const listaEl = document.getElementById('lista-citas-atendidas');
