@@ -253,59 +253,72 @@ function validarFormPaciente() {
 /**
  * Valida y persiste el paciente (nuevo o edición) en la BD local.
  */
-function guardarPaciente() {
-  if (!validarFormPaciente()) {
-    showToast('Corrija los errores en el formulario', 'error');
-    return;
+async function guardarPaciente() {
+  if (!validarForm()) { 
+    showToast('Corrija los errores del formulario', 'error'); 
+    return; 
   }
 
   const editCodigo = document.getElementById('pac-codigo-edit').value;
-  const nacimiento = document.getElementById('pac-nacimiento').value;
-
-  // Normalizar "Otro" con su texto descriptivo
-  const alergiasFinal = [...alergiasSeleccionadas];
-  if (alergiasFinal.includes('Otro')) {
-    const otro = document.getElementById('pac-alergia-otro').value.trim();
-    alergiasFinal[alergiasFinal.indexOf('Otro')] = 'Otro: ' + otro;
+  
+  // Capturar estructura flexible del apoderado si aplica
+  let datosApoderado = null;
+  const esMenor = document.getElementById('bloque-apoderado').style.display === 'block';
+  if (esMenor) {
+    datosApoderado = {
+      nombre: document.getElementById('pac-apoderado').value.trim(),
+      parentesco: document.getElementById('pac-parentesco-apoderado').value
+    };
   }
 
-  const pac = {
-    codigo:     editCodigo || nextId('PAC', DB.get('pacientes')),
-    nombres:    document.getElementById('pac-nombres').value.trim(),
-    apellidos:  document.getElementById('pac-apellidos').value.trim(),
-    tipoDoc:    document.getElementById('pac-tipo-doc').value,
-    documento:  document.getElementById('pac-doc').value.trim(),
-    nacimiento,
-    edad:       calcAge(nacimiento),
-    telefono:   document.getElementById('pac-telefono').value.trim(),
-    email:      document.getElementById('pac-email').value.trim(),
-    direccion:  document.getElementById('pac-direccion').value.trim(),
-    alergias:   alergiasFinal,
-    apoderado:  isMinor(nacimiento) ? {
-      nombre:     document.getElementById('pac-apoderado').value.trim(),
-      parentesco: document.getElementById('pac-parentesco-apoderado').value,
-    } : null,
-    emergencia: {
-      nombre:     document.getElementById('pac-emerg-nombre').value.trim(),
-      parentesco: document.getElementById('pac-emerg-parentesco').value,
-      telefono:   document.getElementById('pac-emerg-tel').value.trim(),
-    },
-    registradoEn: new Date().toISOString(),
+  // Estructura limpia del objeto paciente mapeado según las columnas de Supabase
+  const pacienteData = {
+    codigo: editCodigo || document.getElementById('pac-codigo').value,
+    nombres: document.getElementById('pac-nombres').value.trim(),
+    apellidos: document.getElementById('pac-apellidos').value.trim(),
+    tipo_documento: document.getElementById('pac-tipo-doc').value,
+    documento: document.getElementById('pac-doc').value.trim(),
+    fecha_nacimiento: document.getElementById('pac-nacimiento').value,
+    telefono: document.getElementById('pac-telefono').value.trim(),
+    correo: document.getElementById('pac-email').value.trim() || null,
+    direccion: document.getElementById('pac-direccion').value.trim() || null,
+    alergias: alergiasSeleccionadas, // Array nativo compatible con TEXT[] de Postgres
+    apoderado: datosApoderado,       // Objeto compatible con JSONB de Postgres
+    contacto_emergencia_nombre: document.getElementById('pac-emerg-nombre').value.trim(),
+    contacto_emergencia_parentesco: document.getElementById('pac-emerg-parentesco').value,
+    contacto_emergencia_telefono: document.getElementById('pac-emerg-tel').value.trim()
   };
 
-  const pacs = DB.get('pacientes');
   if (editCodigo) {
-    const idx = pacs.findIndex(p => p.codigo === editCodigo);
-    if (idx >= 0) pacs[idx] = pac;
-    showToast('Paciente actualizado correctamente', 'success');
+    // Operación UPDATE conectada a Supabase
+    const { error } = await supabase
+      .from('pacientes')
+      .update(pacienteData)
+      .eq('codigo', editCodigo);
+
+    if (error) {
+      showToast(`Error al actualizar: ${error.message}`, 'error');
+      return;
+    }
+    showToast('Paciente actualizado exitosamente', 'success');
   } else {
-    pacs.push(pac);
+    // Operación INSERT conectada a Supabase
+    const { error } = await supabase
+      .from('pacientes')
+      .insert([pacienteData]);
+
+    if (error) {
+      if (error.code === '23505') { // Código de error nativo Postgres para duplicados de clave única
+        showToast('El número de documento ya se encuentra registrado', 'error');
+      } else {
+        showToast(`Error al registrar: ${error.message}`, 'error');
+      }
+      return;
+    }
     showToast('Paciente registrado exitosamente', 'success');
   }
 
-  DB.set('pacientes', pacs);
   closeModal('modal-nuevo');
-  resetForm();
   renderTable();
   renderRecientes();
   updateStats();
@@ -350,63 +363,75 @@ function resetForm() {
 /**
  * Filtra y pinta la tabla principal de pacientes.
  */
-function renderTable() {
-  const q   = (document.getElementById('search-pac').value || '').toLowerCase();
-  const fAl = document.getElementById('filter-alergia').value;
-
-  const pacs = DB.get('pacientes').filter(p => {
-    const match = (p.nombres + ' ' + p.apellidos + ' ' + p.documento).toLowerCase().includes(q);
-    if (!match) return false;
-    if (fAl === 'si') return p.alergias && p.alergias.length && p.alergias[0] !== 'Ninguna';
-    if (fAl === 'no') return !p.alergias || !p.alergias.length || p.alergias[0] === 'Ninguna';
-    return true;
-  });
-
-  const tbody = document.getElementById('tbody-pac');
-  const empty = document.getElementById('empty-pac');
-
-  if (!pacs.length) {
-    tbody.innerHTML = '';
-    empty.style.display = 'block';
-    return;
+async function guardarPaciente() {
+  if (!validarForm()) { 
+    showToast('Corrija los errores del formulario', 'error'); 
+    return; 
   }
-  empty.style.display = 'none';
 
-  tbody.innerHTML = pacs.map(p => {
-    const alNoNing = p.alergias && p.alergias.length && p.alergias[0] !== 'Ninguna';
-    const alText   = alNoNing
-      ? `<span style="color:var(--red);font-size:.7rem;font-weight:600">⚠️ ${p.alergias.join(', ')}</span>`
-      : `<span style="color:var(--gray-400);font-size:.72rem">Ninguna</span>`;
+  const editCodigo = document.getElementById('pac-codigo-edit').value;
+  
+  // Capturar estructura flexible del apoderado si aplica
+  let datosApoderado = null;
+  const esMenor = document.getElementById('bloque-apoderado').style.display === 'block';
+  if (esMenor) {
+    datosApoderado = {
+      nombre: document.getElementById('pac-apoderado').value.trim(),
+      parentesco: document.getElementById('pac-parentesco-apoderado').value
+    };
+  }
 
-    return `<tr>
-      <td class="td-code">${p.codigo}</td>
-      <td>
-        <div style="display:flex;align-items:center;gap:.6rem">
-          <div style="width:34px;height:34px;border-radius:50%;background:linear-gradient(135deg,var(--blue),var(--blue-light));color:white;display:flex;align-items:center;justify-content:center;font-size:.75rem;font-weight:700;flex-shrink:0">
-            ${p.nombres[0]}${p.apellidos[0]}
-          </div>
-          <div>
-            <div class="td-main">${p.nombres} ${p.apellidos}</div>
-            <div style="font-size:.68rem;color:var(--gray-400)">${p.email || '—'}</div>
-          </div>
-        </div>
-      </td>
-      <td>${p.tipoDoc}: <strong>${p.documento}</strong></td>
-      <td>
-        ${p.edad} año${p.edad !== 1 ? 's' : ''}
-        ${p.edad < 18 ? '<span style="background:var(--orange-pale);color:#92400E;font-size:.62rem;padding:.1rem .4rem;border-radius:var(--radius-full);font-weight:600">menor</span>' : ''}
-      </td>
-      <td>${p.telefono}</td>
-      <td>${alText}</td>
-      <td>
-        <div class="actions">
-          <button class="btn btn-ghost btn-sm"   onclick="verDetalle('${p.codigo}')">👁 Ver</button>
-          <button class="btn btn-outline btn-sm" onclick="editarPaciente('${p.codigo}')">✏️</button>
-          <button class="btn btn-danger btn-sm"  onclick="eliminarPaciente('${p.codigo}')">🗑</button>
-        </div>
-      </td>
-    </tr>`;
-  }).join('');
+  // Estructura limpia del objeto paciente mapeado según las columnas de Supabase
+  const pacienteData = {
+    codigo: editCodigo || document.getElementById('pac-codigo').value,
+    nombres: document.getElementById('pac-nombres').value.trim(),
+    apellidos: document.getElementById('pac-apellidos').value.trim(),
+    tipo_documento: document.getElementById('pac-tipo-doc').value,
+    documento: document.getElementById('pac-doc').value.trim(),
+    fecha_nacimiento: document.getElementById('pac-nacimiento').value,
+    telefono: document.getElementById('pac-telefono').value.trim(),
+    correo: document.getElementById('pac-email').value.trim() || null,
+    direccion: document.getElementById('pac-direccion').value.trim() || null,
+    alergias: alergiasSeleccionadas, // Array nativo compatible con TEXT[] de Postgres
+    apoderado: datosApoderado,       // Objeto compatible con JSONB de Postgres
+    contacto_emergencia_nombre: document.getElementById('pac-emerg-nombre').value.trim(),
+    contacto_emergencia_parentesco: document.getElementById('pac-emerg-parentesco').value,
+    contacto_emergencia_telefono: document.getElementById('pac-emerg-tel').value.trim()
+  };
+
+  if (editCodigo) {
+    // Operación UPDATE conectada a Supabase
+    const { error } = await supabase
+      .from('pacientes')
+      .update(pacienteData)
+      .eq('codigo', editCodigo);
+
+    if (error) {
+      showToast(`Error al actualizar: ${error.message}`, 'error');
+      return;
+    }
+    showToast('Paciente actualizado exitosamente', 'success');
+  } else {
+    // Operación INSERT conectada a Supabase
+    const { error } = await supabase
+      .from('pacientes')
+      .insert([pacienteData]);
+
+    if (error) {
+      if (error.code === '23505') { // Código de error nativo Postgres para duplicados de clave única
+        showToast('El número de documento ya se encuentra registrado', 'error');
+      } else {
+        showToast(`Error al registrar: ${error.message}`, 'error');
+      }
+      return;
+    }
+    showToast('Paciente registrado exitosamente', 'success');
+  }
+
+  closeModal('modal-nuevo');
+  renderTable();
+  renderRecientes();
+  updateStats();
 }
 
 // ─── Render recientes ──────────────────────────────────────
