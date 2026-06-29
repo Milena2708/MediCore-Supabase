@@ -6,18 +6,18 @@
 let alergiasSeleccionadas = [];
 
 document.addEventListener('DOMContentLoaded', () => {
-    // Inicializar renderizado inicial automático desde la nube
-    renderTable();
-    renderRecientes();
-    updateStats();
+  // Inicializar renderizado inicial automático desde la nube
+  renderTable();
+  renderRecientes();
+  updateStats();
 
-    const nacInput = document.getElementById('pac-nacimiento');
-    if (nacInput) nacInput.max = new Date().toISOString().split('T')[0];
+  const nacInput = document.getElementById('pac-nacimiento');
+  if (nacInput) nacInput.max = new Date().toISOString().split('T')[0];
 
-    const otroInput = document.getElementById('pac-alergia-otro');
-    if (otroInput) {
-        otroInput.addEventListener('input', actualizarResumenAlergias);
-    }
+  const otroInput = document.getElementById('pac-alergia-otro');
+  if (otroInput) {
+    otroInput.addEventListener('input', actualizarResumenAlergias);
+  }
 });
 
 async function abrirNuevoPacienteModal() {
