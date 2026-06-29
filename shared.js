@@ -6,8 +6,8 @@
 const SUPABASE_URL = "https://etzkaejumucuxghturpf.supabase.co";
 const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImV0emthZWp1bXVjdXhnaHR1cnBmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODI2OTExNjAsImV4cCI6MjA5ODI2NzE2MH0.WFZ9HEV1gGpsFfRhQmBH9duLqv0aqo9uX3aFOevP97g";
 
-// Inicialización del cliente global
-const supabase = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+// CORRECCIÓN CLAVE: Usamos supabaseClient para evitar la colisión de nombres
+const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 // ── LocalStorage helpers ─────────────────────────────────────
 const DB = {
   get: (key) => JSON.parse(localStorage.getItem('medicore_' + key) || '[]'),
@@ -249,7 +249,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
 // Utilidad global de cierre de sesión exigida por el PDF
 async function cerrarSesionSistema() {
-  await supabase.auth.signOut();
+  await supabaseClient.auth.signOut();
   sessionStorage.clear();
   window.location.href = 'login.html';
 }

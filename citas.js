@@ -1,3 +1,8 @@
+// ══════════════════════════════════════════
+//  citas.js — Lógica de Programación Médica
+//  Conectado a Supabase Database (supabaseClient)
+// ══════════════════════════════════════════
+
 const MEDICOS = {
   'Medicina general': ['Dr. Carlos Ramos', 'Dra. Ana Torres', 'Dr. José Peña'],
   'Pediatría':        ['Dra. Lucía Herrera', 'Dr. Marco Díaz'],
@@ -17,26 +22,39 @@ const HORAS = Array.from({ length: 20 }, (_, i) => {
 document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('cita-fecha').min = todayStr();
   const sel = document.getElementById('cita-hora');
-  HORAS.forEach(h => {
-    const o = document.createElement('option');
-    o.value = o.textContent = h;
-    sel.appendChild(o);
-  });
+  if (sel && sel.options.length <= 1) {
+    HORAS.forEach(h => {
+      const o = document.createElement('option');
+      o.value = o.textContent = h;
+      sel.appendChild(o);
+    });
+  }
   renderCitas();
   updateStats();
 });
 
-function abrirNuevaCita() {
-  resetFormCita();
+async function abrirNuevaCita() {
+  await resetFormCita();
   document.getElementById('modal-cita-title').textContent = 'Nueva Cita';
-  cargarPacientesSelect();
+  await cargarPacientesSelect();
   openModal('modal-cita');
 }
 
-function cargarPacientesSelect(selected = '') {
+// Carga dinámica de pacientes directo desde la nube
+async function cargarPacientesSelect(selected = '') {
   const sel = document.getElementById('cita-paciente');
   sel.innerHTML = '<option value="">Seleccionar paciente…</option>';
-  DB.get('pacientes').forEach(p => {
+  
+  const { data: pacientes, error } = await supabaseClient
+    .from('pacientes')
+    .select('codigo, nombres, apellidos, documento');
+
+  if (error || !pacientes) {
+    showToast('Error al cargar la lista de pacientes', 'error');
+    return;
+  }
+
+  pacientes.forEach(p => {
     const o = document.createElement('option');
     o.value = p.codigo;
     o.textContent = `${p.nombres} ${p.apellidos} — ${p.documento}`;
@@ -59,20 +77,29 @@ function onEspecialidadChange() {
   clearFieldError('cita-especialidad');
 }
 
-function onPacienteChange() {
+// Ficha informativa dinámica asíncrona
+async function onPacienteChange() {
   const codigo = document.getElementById('cita-paciente').value;
   const strip  = document.getElementById('pac-info-strip');
   const bloque = document.getElementById('bloque-pac-info');
   if (!codigo) { bloque.style.display = 'none'; return; }
-  const p = getPaciente(codigo);
-  if (!p) { bloque.style.display = 'none'; return; }
+  
+  const { data: p, error } = await supabaseClient
+    .from('pacientes')
+    .select('*')
+    .eq('codigo', codigo)
+    .single();
+
+  if (error || !p) { bloque.style.display = 'none'; return; }
+  
+  const edad = calcAge(p.fecha_nacimiento);
   const alNoNing = p.alergias && p.alergias.length && p.alergias[0] !== 'Ninguna';
   strip.innerHTML = `
     <div class="patient-info-strip">
       <div class="pi-avatar">${p.nombres[0]}${p.apellidos[0]}</div>
       <div class="pi-data">
         <div class="pi-name">${p.nombres} ${p.apellidos}</div>
-        <div class="pi-meta">${p.edad} años · ${p.telefono} · ${p.tipoDoc}: ${p.documento}</div>
+        <div class="pi-meta">${edad} años · ${p.telefono} · ${p.tipo_documento}: ${p.documento}</div>
       </div>
       ${alNoNing ? `<div class="allergy-alert">⚠️ ${p.alergias.join(', ')}</div>` : ''}
     </div>`;
@@ -85,18 +112,27 @@ function onPrioridadChange() {
   document.getElementById('bloque-justificacion').style.display = val === 'Urgente' ? 'block' : 'none';
 }
 
-function resetFormCita() {
+async function resetFormCita() {
   document.getElementById('form-cita').reset();
   document.getElementById('cita-codigo-edit').value = '';
-  document.getElementById('cita-codigo').value = nextId('CITA', DB.get('citas'));
+  
+  // Autogeneración secuencial del ID de CITA consultando la realidad de la BD
+  const { data: citas } = await supabaseClient.from('citas').select('codigo');
+  let siguienteCodigo = 'CITA001';
+  if (citas && citas.length > 0) {
+    const nums = citas.map(c => parseInt((c.codigo || '').replace('CITA', '')) || 0);
+    const maxNum = Math.max(...nums) + 1;
+    siguienteCodigo = 'CITA' + String(maxNum).padStart(3, '0');
+  }
+
+  document.getElementById('cita-codigo').value = siguienteCodigo;
   document.getElementById('bloque-pac-info').style.display = 'none';
   document.getElementById('bloque-justificacion').style.display = 'none';
   document.getElementById('cita-medico').innerHTML = '<option value="">Seleccione especialidad primero</option>';
   clearAllErrors('form-cita');
 }
 
-// ─── Validación ───────────────────────────────────────────
-function validarFormCita() {
+async function validarFormCita() {
   clearAllErrors('form-cita');
   let ok = true;
   const editCodigo   = document.getElementById('cita-codigo-edit').value;
@@ -121,75 +157,111 @@ function validarFormCita() {
   else if (motivo.length > 200)      { showFieldError('cita-motivo', 'Máximo 200 caracteres'); ok = false; }
 
   if (ok) {
-    const citas = DB.get('citas');
-    const dup1 = citas.some(c => c.codigo !== editCodigo && c.medico === medico && c.fecha === fecha && c.hora === hora && !['Cancelada', 'No asistió'].includes(c.estado));
-    if (dup1) { showFieldError('cita-hora', 'El médico ya tiene una cita en ese horario'); ok = false; }
-    const dup2 = citas.some(c => c.codigo !== editCodigo && c.paciente === paciente && c.fecha === fecha && c.hora === hora && !['Cancelada', 'No asistió'].includes(c.estado));
-    if (dup2) { showFieldError('cita-hora', 'El paciente ya tiene una cita en ese horario'); ok = false; }
+    // Validación asíncrona de solapamiento de agenda médica
+    const { data: conflMed } = await supabaseClient
+      .from('citas')
+      .select('codigo')
+      .eq('medico', medico)
+      .eq('fecha', fecha)
+      .eq('hora', hora)
+      .not('estado', 'in', '("Cancelada","No asistió")')
+      .neq('codigo', editCodigo);
+
+    if (conflMed && conflMed.length > 0) {
+      showFieldError('cita-hora', 'El médico ya tiene una cita reservada en ese horario');
+      ok = false;
+    }
+
+    const { data: conflPac } = await supabaseClient
+      .from('citas')
+      .select('codigo')
+      .eq('paciente_id', paciente)
+      .eq('fecha', fecha)
+      .eq('hora', hora)
+      .not('estado', 'in', '("Cancelada","No asistió")')
+      .neq('codigo', editCodigo);
+
+    if (conflPac && conflPac.length > 0) {
+      showFieldError('cita-hora', 'El paciente ya cuenta con una cita en ese mismo horario');
+      ok = false;
+    }
   }
   return ok;
 }
 
-function guardarCita() {
-  if (!validarFormCita()) { showToast('Corrija los errores', 'error'); return; }
+async function guardarCita() {
+  const isValid = await validarFormCita();
+  if (!isValid) { showToast('Corrija los errores', 'error'); return; }
+  
   const editCodigo = document.getElementById('cita-codigo-edit').value;
-  const cita = {
-    codigo:       editCodigo || nextId('CITA', DB.get('citas')),
-    paciente:     document.getElementById('cita-paciente').value,
+  
+  let estadoActual = 'Programada';
+  if (editCodigo) {
+    const { data: existente } = await supabaseClient.from('citas').select('estado').eq('codigo', editCodigo).single();
+    if (existente) estadoActual = existente.estado;
+  }
+
+  const citaData = {
+    codigo:       editCodigo || document.getElementById('cita-codigo').value,
+    paciente_id:  document.getElementById('cita-paciente').value,
     especialidad: document.getElementById('cita-especialidad').value,
     medico:       document.getElementById('cita-medico').value,
     fecha:        document.getElementById('cita-fecha').value,
     hora:         document.getElementById('cita-hora').value,
     prioridad:    document.getElementById('cita-prioridad').value,
     motivo:       document.getElementById('cita-motivo').value.trim(),
-    justificacion:document.getElementById('cita-justificacion').value.trim(),
-    estado:       editCodigo ? DB.get('citas').find(c => c.codigo === editCodigo)?.estado || 'Programada' : 'Programada',
-    creadaEn:     new Date().toISOString(),
+    justificacion_prioridad: document.getElementById('cita-justificacion').value.trim() || null,
+    estado:       estadoActual
   };
-  const citas = DB.get('citas');
+
   if (editCodigo) {
-    const idx = citas.findIndex(c => c.codigo === editCodigo);
-    if (idx >= 0) citas[idx] = cita;
-    showToast('Cita actualizada', 'success');
+    const { error } = await supabaseClient.from('citas').update(citaData).eq('codigo', editCodigo);
+    if (error) { showToast(`Error: ${error.message}`, 'error'); return; }
+    showToast('Cita médica actualizada', 'success');
   } else {
-    citas.push(cita);
-    showToast('Cita registrada exitosamente', 'success');
+    const { error } = await supabaseClient.from('citas').insert([citaData]);
+    if (error) { showToast(`Error: ${error.message}`, 'error'); return; }
+    showToast('Cita agendada exitosamente', 'success');
   }
-  DB.set('citas', citas);
+
   closeModal('modal-cita');
   renderCitas();
   updateStats();
 }
 
-// ─── Render ───────────────────────────────────────────────
-function renderCitas() {
+async function renderCitas() {
   const q    = (document.getElementById('f-buscar').value || '').toLowerCase();
   const fF   = document.getElementById('f-fecha').value;
   const fE   = document.getElementById('f-estado').value;
   const fEsp = document.getElementById('f-especialidad').value;
   const fP   = document.getElementById('f-prioridad').value;
 
-  let citas = DB.get('citas').filter(c => {
-    const pac    = getPaciente(c.paciente);
+  const { data: citas, error: errCitas } = await supabaseClient.from('citas').select('*');
+  const { data: pacientes, error: errPacs } = await supabaseClient.from('pacientes').select('*');
+
+  if (errCitas || !citas) return;
+
+  let filtradas = citas.filter(c => {
+    const pac = pacientes ? pacientes.find(p => p.codigo === c.paciente_id) : null;
     const nombre = pac ? `${pac.nombres} ${pac.apellidos}`.toLowerCase() : '';
     if (q && !nombre.includes(q) && !c.medico.toLowerCase().includes(q) && !c.codigo.toLowerCase().includes(q)) return false;
-    if (fF  && c.fecha        !== fF)  return false;
-    if (fE  && c.estado       !== fE)  return false;
+    if (fF   && c.fecha        !== fF)   return false;
+    if (fE   && c.estado       !== fE)   return false;
     if (fEsp && c.especialidad !== fEsp) return false;
-    if (fP  && c.prioridad    !== fP)  return false;
+    if (fP   && c.prioridad    !== fP)   return false;
     return true;
   });
 
   const priOrd = { Urgente: 0, Preferencial: 1, Normal: 2 };
-  citas.sort((a, b) => priOrd[a.prioridad] - priOrd[b.prioridad] || a.fecha.localeCompare(b.fecha) || a.hora.localeCompare(b.hora));
+  filtradas.sort((a, b) => priOrd[a.prioridad] - priOrd[b.prioridad] || a.fecha.localeCompare(b.fecha) || a.hora.localeCompare(b.hora));
 
   const grid  = document.getElementById('cita-card-grid');
   const empty = document.getElementById('empty-citas');
-  if (!citas.length) { grid.innerHTML = ''; empty.style.display = 'block'; return; }
+  if (!filtradas.length) { grid.innerHTML = ''; empty.style.display = 'block'; return; }
   empty.style.display = 'none';
 
-  grid.innerHTML = citas.map(c => {
-    const pac      = getPaciente(c.paciente);
+  grid.innerHTML = filtradas.map(c => {
+    const pac      = pacientes ? pacientes.find(p => p.codigo === c.paciente_id) : null;
     const nombre   = pac ? `${pac.nombres} ${pac.apellidos}` : '(Paciente no encontrado)';
     const alNoNing = pac?.alergias?.length && pac.alergias[0] !== 'Ninguna';
     const priClass = c.prioridad === 'Urgente' ? 'urgente' : c.prioridad === 'Preferencial' ? 'preferencial' : '';
@@ -216,21 +288,24 @@ function renderCitas() {
         </div>
         <div class="cita-motivo">💬 ${c.motivo}</div>
         ${alNoNing ? `<div class="cita-allergy">⚠️ Alergias: ${pac.alergias.join(', ')}</div>` : ''}
-        ${c.prioridad === 'Urgente' && c.justificacion ? `<div style="font-size:.7rem;color:var(--red);margin-top:.35rem">🚨 ${c.justificacion}</div>` : ''}
+        ${c.prioridad === 'Urgente' && c.justificacion_prioridad ? `<div style="font-size:.7rem;color:var(--red);margin-top:.35rem">🚨 ${c.justificacion_prioridad}</div>` : ''}
       </div>
       <div class="cita-actions">${acciones}</div>
     </div>`;
   }).join('');
 }
 
-function cambiarEstado(codigo, nuevoEstado) {
-  const citas = DB.get('citas');
-  const c = citas.find(x => x.codigo === codigo);
+async function cambiarEstado(codigo, nuevoEstado) {
+  const { data: c } = await supabaseClient.from('citas').select('estado').eq('codigo', codigo).single();
   if (!c) return;
   if (nuevoEstado === 'En espera' && c.estado === 'Cancelada') { showToast('No se puede enviar a espera una cita cancelada', 'error'); return; }
-  c.estado = nuevoEstado;
-  if (nuevoEstado === 'En espera') c.horaLlegada = new Date().toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit' });
-  DB.set('citas', citas);
+  
+  const updateData = { estado: nuevoEstado };
+  if (nuevoEstado === 'En espera') {
+    updateData.hora_llegada = new Date().toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit' });
+  }
+
+  await supabaseClient.from('citas').update(updateData).eq('codigo', codigo);
   showToast(`Estado actualizado: ${nuevoEstado}`, 'success');
   renderCitas();
   updateStats();
@@ -243,40 +318,42 @@ function pedirCancelacion(codigo) {
   openModal('modal-cancelar');
 }
 
-function confirmarCancelacion() {
+async function confirmarCancelacion() {
   const motivo = document.getElementById('motivo-cancelacion').value.trim();
   if (!motivo) { showFieldError('motivo-cancelacion', 'Ingrese el motivo de cancelación'); return; }
   const codigo = document.getElementById('cita-cancelar-codigo').value;
-  const citas  = DB.get('citas');
-  const c = citas.find(x => x.codigo === codigo);
-  if (c) { c.estado = 'Cancelada'; c.motivoCancelacion = motivo; }
-  DB.set('citas', citas);
+  
+  await supabaseClient.from('citas').update({ estado: 'Cancelada', motivo_cancelacion: motivo }).eq('codigo', codigo);
   closeModal('modal-cancelar');
-  showToast('Cita cancelada', 'warn');
+  showToast('Cita médica cancelada', 'warn');
   renderCitas();
   updateStats();
 }
 
-function editarCita(codigo) {
-  const c = DB.get('citas').find(x => x.codigo === codigo);
-  if (!c) return;
-  resetFormCita();
-  cargarPacientesSelect(c.paciente);
+async function editarCita(codigo) {
+  const { data: c, error } = await supabaseClient.from('citas').select('*').eq('codigo', codigo).single();
+  if (error || !c) return;
+  
+  await resetFormCita();
+  await cargarPacientesSelect(c.paciente_id);
+  
   document.getElementById('modal-cita-title').textContent     = 'Editar Cita';
   document.getElementById('cita-codigo-edit').value           = c.codigo;
   document.getElementById('cita-codigo').value                = c.codigo;
-  document.getElementById('cita-paciente').value              = c.paciente;
-  onPacienteChange();
+  document.getElementById('cita-paciente').value              = c.paciente_id;
+  await onPacienteChange();
   document.getElementById('cita-especialidad').value          = c.especialidad;
   onEspecialidadChange();
+  
   setTimeout(() => {
     document.getElementById('cita-medico').value = c.medico;
     document.getElementById('cita-hora').value   = c.hora;
-  }, 50);
+  }, 100);
+  
   document.getElementById('cita-fecha').value     = c.fecha;
   document.getElementById('cita-prioridad').value = c.prioridad;
   document.getElementById('cita-motivo').value    = c.motivo;
-  document.getElementById('cita-justificacion').value = c.justificacion || '';
+  document.getElementById('cita-justificacion').value = c.justificacion_prioridad || '';
   if (c.prioridad === 'Urgente') document.getElementById('bloque-justificacion').style.display = 'block';
   openModal('modal-cita');
 }
@@ -289,9 +366,11 @@ function limpiarFiltros() {
   renderCitas();
 }
 
-function updateStats() {
-  const citas = DB.get('citas');
+async function updateStats() {
+  const { data: citas } = await supabaseClient.from('citas').select('*');
+  if (!citas) return;
   const today = todayStr();
+  
   document.getElementById('st-total').textContent    = citas.length;
   document.getElementById('st-hoy').textContent      = citas.filter(c => c.fecha === today && !['Cancelada', 'No asistió'].includes(c.estado)).length;
   document.getElementById('st-espera').textContent   = citas.filter(c => c.estado === 'En espera').length;

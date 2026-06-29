@@ -26,7 +26,7 @@ async function abrirNuevoPacienteModal() {
     resetForm(); 
     
     // 2. Consultamos la base de datos de Supabase de forma asíncrona para calcular el siguiente ID
-    const { data: pacientes, error } = await supabase
+    const { data: pacientes, error } = await supabaseClient
         .from('pacientes')
         .select('codigo');
 
@@ -245,7 +245,7 @@ async function guardarPaciente() {
     };
 
     if (editCodigo) {
-        const { error } = await supabase
+        const { error } = await supabaseClient
             .from('pacientes')
             .update(pacienteData)
             .eq('codigo', editCodigo);
@@ -256,7 +256,7 @@ async function guardarPaciente() {
         }
         showToast('Ficha de paciente actualizada correctamente', 'success');
     } else {
-        const { error } = await supabase
+        const { error } = await supabaseClient
             .from('pacientes')
             .insert([pacienteData]);
 
@@ -282,7 +282,7 @@ async function renderTable() {
     const q = (document.getElementById('search-pac').value || '').toLowerCase();
     const filterAlergia = document.getElementById('filter-alergia').value;
 
-    let { data: pacientes, error } = await supabase
+    let { data: pacientes, error } = await supabaseClient
         .from('pacientes')
         .select('*')
         .order('fecha_creacion', { ascending: false });
@@ -357,7 +357,7 @@ async function renderTable() {
 }
 
 async function renderRecientes() {
-    let { data: pacientes, error } = await supabase
+    let { data: pacientes, error } = await supabaseClient
         .from('pacientes')
         .select('*')
         .order('fecha_creacion', { ascending: false })
@@ -382,7 +382,7 @@ async function renderRecientes() {
 }
 
 async function updateStats() {
-    let { data: pacientes, error } = await supabase.from('pacientes').select('*');
+    let { data: pacientes, error } = await supabaseClient.from('pacientes').select('*');
     if (error || !pacientes) return;
 
     const total = pacientes.length;
@@ -403,7 +403,7 @@ async function updateStats() {
 }
 
 async function verDetalle(codigo) {
-    let { data: p, error } = await supabase
+    let { data: p, error } = await supabaseClient
         .from('pacientes')
         .select('*')
         .eq('codigo', codigo)
@@ -455,7 +455,7 @@ async function verDetalle(codigo) {
 }
 
 async function editarPaciente(codigo) {
-    let { data: p, error } = await supabase
+    let { data: p, error } = await supabaseClient
         .from('pacientes')
         .select('*')
         .eq('codigo', codigo)
@@ -514,7 +514,7 @@ async function eliminarPaciente(codigo) {
     const confirmacion = confirm(`¿Está seguro de eliminar permanentemente al paciente ${codigo}?`);
     if (!confirmacion) return;
 
-    const { error } = await supabase
+    const { error } = await supabaseClient
         .from('pacientes')
         .delete()
         .eq('codigo', codigo);

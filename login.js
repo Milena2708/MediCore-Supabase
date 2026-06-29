@@ -1,3 +1,8 @@
+// ══════════════════════════════════════════
+//  login.js — Lógica de Autenticación y Perfiles
+//  Conectado a Supabase Auth y Database (supabaseClient)
+// ══════════════════════════════════════════
+
 function switchTab(tab) {
   clearAllErrors('form-login');
   clearAllErrors('form-register');
@@ -25,16 +30,16 @@ async function ejecutarLogin() {
 
   if (!ok) return;
 
-  // Autenticación con Supabase Auth
-  const { data, error } = await supabase.auth.signInWithPassword({ email: email, password: pass });
+  // Autenticación con Supabase Auth usando el cliente unificado
+  const { data, error } = await supabaseClient.auth.signInWithPassword({ email: email, password: pass });
 
   if (error) {
     showToast('Credenciales incorrectas o inválidas', 'error');
     return;
   }
 
-  // Descargar el perfil del usuario para conocer su rol de la base de datos
-  const { data: perfil, error: errPerfil } = await supabase
+  // Descargar el perfil del usuario utilizando 'supabaseClient' de shared.js
+  const { data: perfil, error: errPerfil } = await supabaseClient
     .from('usuarios_perfil')
     .select('rol, nombre')
     .eq('user_id', data.user.id)
@@ -71,7 +76,7 @@ async function ejecutarRegistro() {
   if (!ok) return;
 
   // 1. Crear el usuario en Supabase Auth
-  const { data, error } = await supabase.auth.signUp({ email: email, password: pass });
+  const { data, error } = await supabaseClient.auth.signUp({ email: email, password: pass });
 
   if (error) {
     showToast(error.message, 'error');
@@ -79,8 +84,8 @@ async function ejecutarRegistro() {
   }
 
   if (data?.user) {
-    // 2. Inyectar el registro de rol en la tabla usuarios_perfil
-    const { error: errPerfil } = await supabase
+    // 2. Inyectar el registro de rol en la tabla usuarios_perfil utilizando 'supabaseClient'
+    const { error: errPerfil } = await supabaseClient
       .from('usuarios_perfil')
       .insert([{ user_id: data.user.id, nombre: nombre, correo: email, rol: rol }]);
 
