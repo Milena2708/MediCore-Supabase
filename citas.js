@@ -296,16 +296,36 @@ async function renderCitas() {
 }
 
 async function cambiarEstado(codigo, nuevoEstado) {
-  const { data: c } = await supabaseClient.from('citas').select('estado').eq('codigo', codigo).single();
+  const { data: c } = await supabaseClient.from('citas').select('*').eq('codigo', codigo).single();
   if (!c) return;
   if (nuevoEstado === 'En espera' && c.estado === 'Cancelada') { showToast('No se puede enviar a espera una cita cancelada', 'error'); return; }
   
+  // 1. Actualizar el estado en la tabla maestra de citas
   const updateData = { estado: nuevoEstado };
+  await supabaseClient.from('citas').update(updateData).eq('codigo', codigo);
+
+  // 2. ¡CONEXIÓN CLAVE CON LA OPCIÓN B!: Si se envía a sala de espera, insertar el registro operativo
   if (nuevoEstado === 'En espera') {
-    updateData.hora_llegada = new Date().toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit' });
+    const horaLlegada = new Date().toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit' });
+    
+    // Mapeo numérico interno de prioridades para tu columna 'orden_prioridad'
+    const prioNum = c.prioridad === 'Urgente' ? 0 : c.prioridad === 'Preferencial' ? 1 : 2;
+
+    const { error: errSala } = await supabaseClient
+      .from('sala_espera')
+      .insert([{
+        cita_id: codigo,          // Apunta al código correlativo de la cita (Ej: CITA001)
+        hora_llegada: horaLlegada, // Hora real de presencia en clínica
+        estado: 'En espera',
+        orden_prioridad: prioNum
+      }]);
+
+    if (errSala) {
+      showToast(`Error al crear registro en sala: ${errSala.message}`, 'error');
+      return;
+    }
   }
 
-  await supabaseClient.from('citas').update(updateData).eq('codigo', codigo);
   showToast(`Estado actualizado: ${nuevoEstado}`, 'success');
   renderCitas();
   updateStats();

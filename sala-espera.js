@@ -1,6 +1,6 @@
 // ══════════════════════════════════════════
 //  sala-espera.js — Gestión de Cola en Tiempo Real
-//  Conectado a Supabase Database (supabaseClient)
+//  Conectado a la tabla operativa: sala_espera (Opción B)
 // ══════════════════════════════════════════
 
 const PRIO_ORD = { Urgente: 0, Preferencial: 1, Normal: 2 };
@@ -11,7 +11,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   setInterval(renderSala, 15000); // Auto-refresh cada 15 segundos para simular tiempo real
 });
 
-// Carga dinámica de médicos basada en las citas reales de la nube
+// Carga dinámica de médicos basada en las citas de la nube
 async function cargarMedicosSelect() {
   const { data: citas } = await supabaseClient.from('citas').select('medico');
   if (!citas) return;
@@ -31,16 +31,32 @@ async function cargarMedicosSelect() {
 async function renderSala() {
   const fMed = document.getElementById('f-medico').value;
   const fEsp = document.getElementById('f-especialidad').value;
-  const fEst = document.getElementById('f-estado-sala').value;
+  let fEst = document.getElementById('f-estado-sala').value;
 
-  // 1. Descargar información real de la nube
-  const { data: citas, error: errCitas } = await supabaseClient.from('citas').select('*');
+  // Homologar "Atendido" de la opción HTML con "Atendida" de tu CHECK SQL
+  if (fEst === 'Atendido') fEst = 'Atendida';
+
+  // 1. Descargar la data exclusivamente desde la tabla operativa 'sala_espera' enlazando su cita maestra
+  const { data: cola, error: errCola } = await supabaseClient.from('sala_espera').select('*, citas(*)');
   const { data: pacientes, error: errPacs } = await supabaseClient.from('pacientes').select('*');
 
-  if (errCitas || !citas) return;
+  if (errCola || !cola) return;
 
-  // Filtrar citas según los estados válidos de la Sala de Espera y los filtros activos
-  let filtradas = citas.filter(c => {
+  // Mapear los datos unificados leyendo el estado y los tiempos de atención reales de 'sala_espera'
+  let filtradas = cola.map(item => {
+    const c = item.citas || {};
+    return {
+      ...c,
+      estado: item.estado, // Estado dinámico de la sala de espera
+      hora_llegada: item.hora_llegada, // Extraído de tu columna SQL de sala_espera
+      hora_inicio_atencion: item.hora_inicio_atencion, // Extraído de tu columna SQL de sala_espera
+      prioridad_num: item.orden_prioridad
+    };
+  });
+
+  // Filtrar según los criterios de búsqueda activos de la UI
+  filtradas = filtradas.filter(c => {
+    if (!c.codigo) return false;
     if (!['En espera', 'En atención', 'Atendida', 'No asistió'].includes(c.estado)) return false;
     if (fMed && c.medico !== fMed) return false;
     if (fEsp && c.especialidad !== fEsp) return false;
@@ -48,19 +64,16 @@ async function renderSala() {
     return true;
   });
 
-  // Ordenar: Urgente (0) > Preferencial (1) > Normal (2), luego por hora de llegada, luego por hora programada
+  // Ordenar usando el peso numérico de prioridad de tu tabla 'sala_espera'
   filtradas.sort((a, b) => {
     const pA = PRIO_ORD[a.prioridad] ?? 2, pB = PRIO_ORD[b.prioridad] ?? 2;
     if (pA !== pB) return pA - pB;
-    const lA = a.hora_llegada || '99:99', lB = b.hora_llegada || '99:99';
-    if (lA !== lB) return lA.localeCompare(lB);
-    return (a.hora || '').localeCompare(b.hora || '');
+    return (a.hora_llegada || '99:99').localeCompare(b.hora_llegada || '99:99');
   });
 
   const lista = document.getElementById('sala-lista');
   const empty = document.getElementById('empty-sala');
 
-  // Actualizar paneles estadísticos y barras laterales con los datos actualizados
   updateStats(filtradas);
   updateSidebar(filtradas, pacientes);
 
@@ -80,10 +93,7 @@ async function renderSala() {
     const edad = pac ? calcAge(pac.fecha_nacimiento) : '';
 
     if (c.estado === 'En espera') turnoNum++;
-    const numDisplay = c.estado === 'En atención' ? '🩺'
-      : c.estado === 'Atendida'   ? '✓'
-      : c.estado === 'No asistió' ? '✗'
-      : turnoNum;
+    const numDisplay = c.estado === 'En atención' ? '🩺' : c.estado === 'Atendida' ? '✓' : c.estado === 'No asistió' ? '✗' : turnoNum;
 
     let acciones = '';
     if (c.estado === 'En espera') {
@@ -116,7 +126,6 @@ async function renderSala() {
         </div>
         <div class="turno-motivo">${c.motivo}</div>
         ${alNoNing ? `<div class="turno-allergy">⚠️ Alergias: ${pac.alergias.join(', ')}</div>` : ''}
-        ${c.prioridad === 'Urgente' && c.justificacion_prioridad ? `<div class="turno-justif">🚨 Urgencia: ${c.justificacion_prioridad}</div>` : ''}
         <div class="turno-tiempos">
           <span class="turno-tiempo-chip">📅 ${formatDate(c.fecha)}</span>
           ${c.hora_llegada ? `<span class="turno-tiempo-chip llegada">🚶 Llegó: ${c.hora_llegada}</span>` : ''}
@@ -137,7 +146,6 @@ function updateStats(citas) {
 }
 
 function updateSidebar(citas, pacientes) {
-  // 1. Render Ticker Turno Actual
   const enAtencion = citas.find(c => c.estado === 'En atención');
   if (enAtencion) {
     const pac = pacientes ? pacientes.find(p => p.codigo === enAtencion.paciente_id) : null;
@@ -150,7 +158,6 @@ function updateSidebar(citas, pacientes) {
     document.getElementById('ticker-esp').textContent = '—';
   }
 
-  // 2. Render Resumen del Día
   const total    = citas.length;
   const espera   = citas.filter(c => c.estado === 'En espera').length;
   const atencion = citas.filter(c => c.estado === 'En atención').length;
@@ -163,46 +170,41 @@ function updateSidebar(citas, pacientes) {
     <div class="resumen-item"><span class="resumen-label">Atendidos</span><span class="resumen-val" style="color:var(--green)">${atend}</span></div>
     <div class="resumen-item"><span class="resumen-label">No asistió</span><span class="resumen-val" style="color:var(--gray-400)">${noAsist}</span></div>`;
 
-  // 3. Render Próximos en Atención (Máximo 3)
   const proximos = citas.filter(c => c.estado === 'En espera').slice(0, 3);
   const pEl      = document.getElementById('proximos-lista');
-  if (!proximos.length) {
-    pEl.innerHTML = '<div style="font-size:.75rem;color:var(--gray-400);padding:.5rem 0">Sin pacientes en espera</div>';
-    return;
-  }
+  if (!pEl) return;
+  if (!proximos.length) { pEl.innerHTML = '<div style="font-size:.75rem;color:var(--gray-400);padding:.5rem 0">Sin pacientes en espera</div>'; return; }
   pEl.innerHTML = proximos.map((c, i) => {
     const pac = pacientes ? pacientes.find(p => p.codigo === c.paciente_id) : null;
     const nombre = pac ? `${pac.nombres} ${pac.apellidos}` : '—';
     const priColor = c.prioridad === 'Urgente' ? 'var(--red)' : c.prioridad === 'Preferencial' ? 'var(--orange)' : 'var(--blue)';
-    return `<div style="display:flex;align-items:center;gap:.65rem;padding:.65rem 0;border-bottom:1px solid var(--gray-100)">
-      <div style="width:28px;height:28px;border-radius:50%;background:${priColor};color:white;display:flex;align-items:center;justify-content:center;font-size:.7rem;font-weight:700;flex-shrink:0">${i + 1}</div>
-      <div>
-        <div style="font-size:.8rem;font-weight:600;color:var(--gray-900)">${nombre}</div>
-        <div style="font-size:.68rem;color:var(--gray-400)">${c.especialidad} · ${c.hora}</div>
-      </div>
-    </div>`;
+    return `
+      <div style="display:flex;align-items:center;gap:.65rem;padding:.65rem 0;border-bottom:1px solid var(--gray-100)">
+        <div style="width:28px;height:28px;border-radius:50%;background:${priColor};color:white;display:flex;align-items:center;justify-content:center;font-size:.7rem;font-weight:700;flex-shrink:0">${i + 1}</div>
+        <div>
+          <div style="font-size:.8rem;font-weight:600;color:var(--gray-900)">${nombre}</div>
+          <div style="font-size:.68rem;color:var(--gray-400)">${c.especialidad} · ${c.hora}</div>
+        </div>
+      </div>`;
   }).join('');
 }
 
 async function pasarAtencion(codigo) {
-  const { data: citas } = await supabaseClient.from('citas').select('*');
-  const c = citas ? citas.find(x => x.codigo === codigo) : null;
-  
-  if (!c) { showToast('Cita no encontrada', 'error'); return; }
-  if (c.estado !== 'En espera') { showToast('Solo se puede atender pacientes en espera', 'error'); return; }
-  
-  const yaEnAtencion = citas.find(x => x.codigo !== codigo && x.medico === c.medico && x.estado === 'En atención');
-  if (yaEnAtencion) { showToast(`El médico ${c.medico} ya tiene un paciente en atención`, 'warn'); return; }
-  
+  const { data: activos } = await supabaseClient.from('sala_espera').select('*, citas(*)').eq('estado', 'En atención');
+  const { data: citaMaestra } = await supabaseClient.from('citas').select('medico').eq('codigo', codigo).single();
+
+  const yaEnAtencion = activos ? activos.find(x => x.citas?.medico === citaMaestra?.medico) : null;
+  if (yaEnAtencion) { showToast(`El médico ${citaMaestra.medico} ya tiene un paciente en atención`, 'warn'); return; }
+
   const horaAhora = new Date().toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit' });
-  
-  await supabaseClient
-    .from('citas')
-    .update({ estado: 'En atención', hora_inicio_atencion: horaAhora })
-    .eq('codigo', codigo);
+
+  // 1. Actualizar tabla sala_espera
+  await supabaseClient.from('sala_espera').update({ estado: 'En atención', hora_inicio_atencion: horaAhora }).eq('cita_id', codigo);
+  // 2. Sincronizar estado maestro en citas
+  await supabaseClient.from('citas').update({ estado: 'En atención' }).eq('codigo', codigo);
 
   showToast('Paciente ingresó a consultorio', 'success');
-  renderSala();
+  await renderSala();
 }
 
 function pedirNoAsistio(codigo) {
@@ -212,10 +214,13 @@ function pedirNoAsistio(codigo) {
 
 async function confirmarNoAsistio() {
   const codigo = document.getElementById('noasistio-codigo').value;
+
+  await supabaseClient.from('sala_espera').update({ estado: 'No asistió' }).eq('cita_id', codigo);
   await supabaseClient.from('citas').update({ estado: 'No asistió' }).eq('codigo', codigo);
+
   closeModal('modal-noasistio');
   showToast('Marcado como No asistió', 'warn');
-  renderSala();
+  await renderSala();
 }
 
 function pedirAtendido(codigo) {
@@ -228,15 +233,27 @@ async function confirmarAtendido() {
   const codigo = document.getElementById('atendido-codigo').value;
   const horaFin = new Date().toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit' });
   
-  await supabaseClient
-    .from('citas')
-    .update({ estado: 'Atendida', hora_fin_atencion: horaFin })
-    .eq('codigo', codigo);
+  // 1. Finalizar de forma operativa en la tabla relacional sala_espera
+  const { error: errSala } = await supabaseClient
+    .from('sala_espera')
+    .update({ estado: 'Atendida', hora_fin: horaFin })
+    .eq('cita_id', codigo);
+
+  if (errSala) {
+    showToast(`Error en sala: ${errSala.message}`, 'error');
+    return;
+  }
+
+  // 2. Sincronizar estado final en la tabla general de citas
+  await supabaseClient.from('citas').update({ estado: 'Atendida' }).eq('codigo', codigo);
 
   const btnH = document.getElementById('btn-ir-historial');
-  btnH.href = `historial.html?cita=${codigo}`;
-  btnH.style.display = 'inline-flex';
+  if (btnH) {
+    btnH.href = `historial.html?cita=${codigo}`;
+    btnH.style.display = 'inline-flex';
+  }
   
   showToast('Consulta finalizada con éxito.', 'success');
-  renderSala();
+  closeModal('modal-a-historial');
+  await renderSala();
 }
