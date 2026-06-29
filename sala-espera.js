@@ -1,41 +1,58 @@
+// ══════════════════════════════════════════
+//  sala-espera.js — Gestión de Cola en Tiempo Real
+//  Conectado a Supabase Database (supabaseClient)
+// ══════════════════════════════════════════
+
 const PRIO_ORD = { Urgente: 0, Preferencial: 1, Normal: 2 };
 
-document.addEventListener('DOMContentLoaded', () => {
-  cargarMedicosSelect();
-  renderSala();
-  setInterval(renderSala, 30000); // auto-refresh cada 30s
+document.addEventListener('DOMContentLoaded', async () => {
+  await cargarMedicosSelect();
+  await renderSala();
+  setInterval(renderSala, 15000); // Auto-refresh cada 15 segundos para simular tiempo real
 });
 
-function cargarMedicosSelect() {
-  const citas   = DB.get('citas');
+// Carga dinámica de médicos basada en las citas reales de la nube
+async function cargarMedicosSelect() {
+  const { data: citas } = await supabaseClient.from('citas').select('medico');
+  if (!citas) return;
+  
   const medicos = [...new Set(citas.map(c => c.medico).filter(Boolean))];
   const sel     = document.getElementById('f-medico');
-  medicos.forEach(m => {
-    const o = document.createElement('option');
-    o.value = o.textContent = m;
-    sel.appendChild(o);
-  });
+  if (sel) {
+    sel.innerHTML = '<option value="">Todos los médicos</option>';
+    medicos.forEach(m => {
+      const o = document.createElement('option');
+      o.value = o.textContent = m;
+      sel.appendChild(o);
+    });
+  }
 }
 
-function renderSala() {
+async function renderSala() {
   const fMed = document.getElementById('f-medico').value;
   const fEsp = document.getElementById('f-especialidad').value;
   const fEst = document.getElementById('f-estado-sala').value;
 
-  let citas = DB.get('citas').filter(c => {
+  // 1. Descargar información real de la nube
+  const { data: citas, error: errCitas } = await supabaseClient.from('citas').select('*');
+  const { data: pacientes, error: errPacs } = await supabaseClient.from('pacientes').select('*');
+
+  if (errCitas || !citas) return;
+
+  // Filtrar citas según los estados válidos de la Sala de Espera y los filtros activos
+  let filtradas = citas.filter(c => {
     if (!['En espera', 'En atención', 'Atendida', 'No asistió'].includes(c.estado)) return false;
-    if (c.estado === 'Cancelada') return false;
     if (fMed && c.medico !== fMed) return false;
     if (fEsp && c.especialidad !== fEsp) return false;
     if (fEst && c.estado !== fEst) return false;
     return true;
   });
 
-  // Sort: urgente > preferencial > normal, luego hora llegada, luego hora cita
-  citas.sort((a, b) => {
+  // Ordenar: Urgente (0) > Preferencial (1) > Normal (2), luego por hora de llegada, luego por hora programada
+  filtradas.sort((a, b) => {
     const pA = PRIO_ORD[a.prioridad] ?? 2, pB = PRIO_ORD[b.prioridad] ?? 2;
     if (pA !== pB) return pA - pB;
-    const lA = a.horaLlegada || '99:99', lB = b.horaLlegada || '99:99';
+    const lA = a.hora_llegada || '99:99', lB = b.hora_llegada || '99:99';
     if (lA !== lB) return lA.localeCompare(lB);
     return (a.hora || '').localeCompare(b.hora || '');
   });
@@ -43,18 +60,24 @@ function renderSala() {
   const lista = document.getElementById('sala-lista');
   const empty = document.getElementById('empty-sala');
 
-  updateStats(citas);
-  updateSidebar(citas);
+  // Actualizar paneles estadísticos y barras laterales con los datos actualizados
+  updateStats(filtradas);
+  updateSidebar(filtradas, pacientes);
 
-  if (!citas.length) { lista.innerHTML = ''; empty.style.display = 'block'; return; }
+  if (!filtradas.length) { 
+    lista.innerHTML = ''; 
+    empty.style.display = 'block'; 
+    return; 
+  }
   empty.style.display = 'none';
 
   let turnoNum = 0;
-  lista.innerHTML = citas.map((c, i) => {
-    const pac     = getPaciente(c.paciente);
-    const nombre  = pac ? `${pac.nombres} ${pac.apellidos}` : '(Paciente no encontrado)';
+  lista.innerHTML = filtradas.map((c) => {
+    const pac = pacientes ? pacientes.find(p => p.codigo === c.paciente_id) : null;
+    const nombre = pac ? `${pac.nombres} ${pac.apellidos}` : '(Paciente no encontrado)';
     const priClass = (c.prioridad || '').toLowerCase();
     const alNoNing = pac?.alergias?.length && pac.alergias[0] !== 'Ninguna';
+    const edad = pac ? calcAge(pac.fecha_nacimiento) : '';
 
     if (c.estado === 'En espera') turnoNum++;
     const numDisplay = c.estado === 'En atención' ? '🩺'
@@ -72,13 +95,11 @@ function renderSala() {
       acciones = `<button class="btn btn-primary btn-sm" onclick="pedirAtendido('${c.codigo}')">✅ Finalizar</button>`;
     }
     if (c.estado === 'Atendida') {
-      const hist = DB.get('historial').find(h => h.citaCodigo === c.codigo);
-      acciones = hist
-        ? `<span style="font-size:.7rem;color:var(--green);font-weight:600">📋 Historial registrado</span>`
-        : `<a href="historial.html?cita=${c.codigo}" class="btn btn-outline btn-sm">📋 Registrar historial</a>`;
+      acciones = `<a href="historial.html?cita=${c.codigo}" class="btn btn-outline btn-sm">📋 Registrar historial</a>`;
     }
 
     const estadoClass = c.estado === 'En atención' ? 'en-atencion' : c.estado === 'Atendida' ? 'atendido' : '';
+    
     return `<div class="turno-card ${priClass} ${estadoClass}">
       <div class="turno-num ${priClass}">${numDisplay}</div>
       <div class="turno-body">
@@ -91,15 +112,15 @@ function renderSala() {
           <span>👨‍⚕️ ${c.medico}</span>
           <span>🏥 ${c.especialidad}</span>
           <span>🕐 Cita: ${c.hora}</span>
-          ${pac ? `<span>🎂 ${pac.edad} años</span>` : ''}
+          ${pac ? `<span>🎂 ${edad} años</span>` : ''}
         </div>
         <div class="turno-motivo">${c.motivo}</div>
         ${alNoNing ? `<div class="turno-allergy">⚠️ Alergias: ${pac.alergias.join(', ')}</div>` : ''}
-        ${c.prioridad === 'Urgente' && c.justificacion ? `<div class="turno-justif">🚨 Urgencia: ${c.justificacion}</div>` : ''}
+        ${c.prioridad === 'Urgente' && c.justificacion_prioridad ? `<div class="turno-justif">🚨 Urgencia: ${c.justificacion_prioridad}</div>` : ''}
         <div class="turno-tiempos">
           <span class="turno-tiempo-chip">📅 ${formatDate(c.fecha)}</span>
-          ${c.horaLlegada       ? `<span class="turno-tiempo-chip llegada">🚶 Llegó: ${c.horaLlegada}</span>` : ''}
-          ${c.horaInicioAtencion? `<span class="turno-tiempo-chip atencion">🩺 Atención: ${c.horaInicioAtencion}</span>` : ''}
+          ${c.hora_llegada ? `<span class="turno-tiempo-chip llegada">🚶 Llegó: ${c.hora_llegada}</span>` : ''}
+          ${c.hora_inicio_atencion ? `<span class="turno-tiempo-chip atencion">🩺 Atención: ${c.hora_inicio_atencion}</span>` : ''}
         </div>
       </div>
       <div class="turno-acciones">${acciones}</div>
@@ -115,11 +136,11 @@ function updateStats(citas) {
   document.getElementById('st-atendidos').textContent    = citas.filter(c => c.estado === 'Atendida').length;
 }
 
-function updateSidebar(citas) {
-  // Ticker
+function updateSidebar(citas, pacientes) {
+  // 1. Render Ticker Turno Actual
   const enAtencion = citas.find(c => c.estado === 'En atención');
   if (enAtencion) {
-    const pac = getPaciente(enAtencion.paciente);
+    const pac = pacientes ? pacientes.find(p => p.codigo === enAtencion.paciente_id) : null;
     document.getElementById('ticker-num').textContent = enAtencion.codigo;
     document.getElementById('ticker-pac').textContent = pac ? `${pac.nombres} ${pac.apellidos}` : '—';
     document.getElementById('ticker-esp').textContent = `${enAtencion.especialidad} · ${enAtencion.medico}`;
@@ -129,7 +150,7 @@ function updateSidebar(citas) {
     document.getElementById('ticker-esp').textContent = '—';
   }
 
-  // Resumen
+  // 2. Render Resumen del Día
   const total    = citas.length;
   const espera   = citas.filter(c => c.estado === 'En espera').length;
   const atencion = citas.filter(c => c.estado === 'En atención').length;
@@ -142,7 +163,7 @@ function updateSidebar(citas) {
     <div class="resumen-item"><span class="resumen-label">Atendidos</span><span class="resumen-val" style="color:var(--green)">${atend}</span></div>
     <div class="resumen-item"><span class="resumen-label">No asistió</span><span class="resumen-val" style="color:var(--gray-400)">${noAsist}</span></div>`;
 
-  // Próximos
+  // 3. Render Próximos en Atención (Máximo 3)
   const proximos = citas.filter(c => c.estado === 'En espera').slice(0, 3);
   const pEl      = document.getElementById('proximos-lista');
   if (!proximos.length) {
@@ -150,7 +171,7 @@ function updateSidebar(citas) {
     return;
   }
   pEl.innerHTML = proximos.map((c, i) => {
-    const pac    = getPaciente(c.paciente);
+    const pac = pacientes ? pacientes.find(p => p.codigo === c.paciente_id) : null;
     const nombre = pac ? `${pac.nombres} ${pac.apellidos}` : '—';
     const priColor = c.prioridad === 'Urgente' ? 'var(--red)' : c.prioridad === 'Preferencial' ? 'var(--orange)' : 'var(--blue)';
     return `<div style="display:flex;align-items:center;gap:.65rem;padding:.65rem 0;border-bottom:1px solid var(--gray-100)">
@@ -163,17 +184,24 @@ function updateSidebar(citas) {
   }).join('');
 }
 
-function pasarAtencion(codigo) {
-  const citas = DB.get('citas');
-  const c     = citas.find(x => x.codigo === codigo);
+async function pasarAtencion(codigo) {
+  const { data: citas } = await supabaseClient.from('citas').select('*');
+  const c = citas ? citas.find(x => x.codigo === codigo) : null;
+  
   if (!c) { showToast('Cita no encontrada', 'error'); return; }
   if (c.estado !== 'En espera') { showToast('Solo se puede atender pacientes en espera', 'error'); return; }
+  
   const yaEnAtencion = citas.find(x => x.codigo !== codigo && x.medico === c.medico && x.estado === 'En atención');
   if (yaEnAtencion) { showToast(`El médico ${c.medico} ya tiene un paciente en atención`, 'warn'); return; }
-  c.estado = 'En atención';
-  c.horaInicioAtencion = new Date().toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit' });
-  DB.set('citas', citas);
-  showToast('Paciente en atención', 'success');
+  
+  const horaAhora = new Date().toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit' });
+  
+  await supabaseClient
+    .from('citas')
+    .update({ estado: 'En atención', hora_inicio_atencion: horaAhora })
+    .eq('codigo', codigo);
+
+  showToast('Paciente ingresó a consultorio', 'success');
   renderSala();
 }
 
@@ -182,12 +210,9 @@ function pedirNoAsistio(codigo) {
   openModal('modal-noasistio');
 }
 
-function confirmarNoAsistio() {
+async function confirmarNoAsistio() {
   const codigo = document.getElementById('noasistio-codigo').value;
-  const citas  = DB.get('citas');
-  const c      = citas.find(x => x.codigo === codigo);
-  if (c) c.estado = 'No asistió';
-  DB.set('citas', citas);
+  await supabaseClient.from('citas').update({ estado: 'No asistió' }).eq('codigo', codigo);
   closeModal('modal-noasistio');
   showToast('Marcado como No asistió', 'warn');
   renderSala();
@@ -199,18 +224,19 @@ function pedirAtendido(codigo) {
   openModal('modal-a-historial');
 }
 
-function confirmarAtendido() {
+async function confirmarAtendido() {
   const codigo = document.getElementById('atendido-codigo').value;
-  const citas  = DB.get('citas');
-  const c      = citas.find(x => x.codigo === codigo);
-  if (!c) { showToast('Cita no encontrada', 'error'); return; }
-  if (c.estado !== 'En atención') { showToast('Solo se puede finalizar pacientes en atención', 'error'); return; }
-  c.estado  = 'Atendida';
-  c.horaFin = new Date().toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit' });
-  DB.set('citas', citas);
-  const btnH     = document.getElementById('btn-ir-historial');
-  btnH.href      = `historial.html?cita=${codigo}`;
+  const horaFin = new Date().toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit' });
+  
+  await supabaseClient
+    .from('citas')
+    .update({ estado: 'Atendida', hora_fin_atencion: horaFin })
+    .eq('codigo', codigo);
+
+  const btnH = document.getElementById('btn-ir-historial');
+  btnH.href = `historial.html?cita=${codigo}`;
   btnH.style.display = 'inline-flex';
-  showToast('Consulta finalizada. Registra el historial clínico.', 'success');
+  
+  showToast('Consulta finalizada con éxito.', 'success');
   renderSala();
 }
