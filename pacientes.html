@@ -1,353 +1,318 @@
 <!DOCTYPE html>
 <html lang="es">
 <head>
-  <meta charset="UTF-8"/>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>MediCore — Registro de Pacientes</title>
-  <link rel="stylesheet" href="shared.css"/>
-  <link rel="stylesheet" href="pacientes.css"/>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MediCore - Gestión de Pacientes</title>
+    <link rel="stylesheet" href="shared.css">
+    <link rel="stylesheet" href="pacientes.css">
 </head>
 <body>
-
-<header class="app-header">
-  <div class="app-header-inner">
-    <a href="index.html" class="logo-link">
-      <div class="logo-mark">M</div>
-      <div class="logo-text-wrap">
-        <span class="logo-name">MediCore</span>
-        <span class="logo-sub">Sistema Clínico</span>
-      </div>
-    </a>
-    <nav class="app-nav">
-      <a href="index.html"       class="nav-item"><span class="nav-num">00</span><span class="nav-label">Inicio</span></a>
-      <a href="pacientes.html"   class="nav-item active"><span class="nav-num">01</span><span class="nav-label">Pacientes</span></a>
-      <a href="citas.html"       class="nav-item"><span class="nav-num">02</span><span class="nav-label">Citas</span></a>
-      <a href="sala-espera.html" class="nav-item"><span class="nav-num">03</span><span class="nav-label">Sala de Espera</span></a>
-      <a href="historial.html"   class="nav-item"><span class="nav-num">04</span><span class="nav-label">Historial</span></a>
-      <a href="reportes.html"    class="nav-item"><span class="nav-num">05</span><span class="nav-label">Reportes</span></a>
-    </nav>
-    <div class="nav-right">
-      <span class="nav-clock" id="nav-clock">00:00:00</span>
-      <div class="nav-status"><div class="status-dot"></div>Sistema activo</div>
-    </div>
-  </div>
-</header>
-
-<main class="page-wrap">
-
-  <!-- Hero -->
-  <div class="page-hero">
-    <div class="page-hero-text">
-      <div class="page-hero-label">Módulo 01</div>
-      <div class="page-hero-title">Registro de Pacientes</div>
-      <div class="page-hero-sub">Gestiona el alta, edición y búsqueda de pacientes registrados en el sistema.</div>
-    </div>
-    <div class="page-hero-actions">
-      <button class="btn btn-white" onclick="openModal('modal-nuevo')">➕ Nuevo Paciente</button>
-    </div>
-  </div>
-
-  <!-- Stats -->
-  <div class="stats-row">
-    <div class="stat-card">
-      <div class="stat-icon blue">👥</div>
-      <div><div class="stat-val" id="st-total">0</div><div class="stat-label">Total Pacientes</div></div>
-    </div>
-    <div class="stat-card">
-      <div class="stat-icon green">🟢</div>
-      <div><div class="stat-val" id="st-adultos">0</div><div class="stat-label">Adultos</div></div>
-    </div>
-    <div class="stat-card">
-      <div class="stat-icon orange">⚠️</div>
-      <div><div class="stat-val" id="st-menores">0</div><div class="stat-label">Menores de edad</div></div>
-    </div>
-    <div class="stat-card">
-      <div class="stat-icon red">🚨</div>
-      <div><div class="stat-val" id="st-alergias">0</div><div class="stat-label">Con Alergias</div></div>
-    </div>
-  </div>
-
-  <div class="layout">
-    <!-- Main table -->
-    <div class="card">
-      <div style="display:flex;align-items:center;justify-content:space-between;gap:1rem;margin-bottom:1.25rem;flex-wrap:wrap;">
-        <div class="card-title-lg" style="margin:0">Lista de Pacientes</div>
-        <div class="search-bar">
-          <div class="search-input-wrap">
-            <span class="search-icon">🔍</span>
-            <input type="text" class="form-control" id="search-pac" placeholder="Buscar por nombre, apellido o DNI…" oninput="renderTable()"/>
-          </div>
-          <select class="form-control" id="filter-alergia" onchange="renderTable()" style="min-width:130px;">
-            <option value="">Todas las alergias</option>
-            <option value="si">Con alergias</option>
-            <option value="no">Sin alergias</option>
-          </select>
-        </div>
-      </div>
-      <div class="table-wrap">
-        <table class="data-table" id="tabla-pacientes">
-          <thead>
-            <tr>
-              <th>Código</th>
-              <th>Paciente</th>
-              <th>Documento</th>
-              <th>Edad</th>
-              <th>Teléfono</th>
-              <th>Alergias</th>
-              <th>Acciones</th>
-            </tr>
-          </thead>
-          <tbody id="tbody-pac"></tbody>
-        </table>
-      </div>
-      <div id="empty-pac" class="empty-state" style="display:none">
-        <div class="empty-icon">👥</div>
-        <div class="empty-title">No hay pacientes registrados</div>
-        <div class="empty-sub">Registra el primer paciente con el botón "Nuevo Paciente"</div>
-        <button class="btn btn-primary" style="margin-top:1rem" onclick="openModal('modal-nuevo')">➕ Nuevo Paciente</button>
-      </div>
-    </div>
-
-    <!-- Sidebar: quick list -->
-    <div class="card" style="position:sticky;top:80px;">
-      <div class="card-title">Pacientes Recientes</div>
-      <div id="lista-recientes"></div>
-    </div>
-  </div>
-
-</main>
-
-<!-- ══════════════ MODAL NUEVO / EDITAR PACIENTE ══════════════ -->
-<div class="modal-overlay" id="modal-nuevo">
-  <div class="modal-box lg">
-    <div class="modal-header">
-      <div>
-        <div class="modal-title" id="modal-pac-title">Nuevo Paciente</div>
-        <div class="modal-subtitle">Complete todos los campos requeridos (<span style="color:var(--red)">*</span>)</div>
-      </div>
-      <button class="modal-close" onclick="closeModal('modal-nuevo')">✕</button>
-    </div>
-
-    <form id="form-paciente" novalidate>
-      <input type="hidden" id="pac-codigo-edit"/>
-
-      <!-- Bloque 1: Datos personales -->
-      <div class="section-label" style="margin-bottom:.75rem">Datos Personales</div>
-      <div class="form-grid" style="margin-bottom:1.25rem">
-
-        <div class="form-group">
-          <label class="form-label">Código <span class="opt">(auto)</span></label>
-          <input type="text" class="form-control" id="pac-codigo" readonly placeholder="PAC001"/>
-        </div>
-
-        <div class="form-group">
-          <label class="form-label">Nombres <span class="req">*</span></label>
-          <input type="text" class="form-control" id="pac-nombres" maxlength="60" placeholder="Ej: María Elena"/>
-          <div class="form-error" id="pac-nombres-err"></div>
-        </div>
-
-        <div class="form-group">
-          <label class="form-label">Apellidos <span class="req">*</span></label>
-          <input type="text" class="form-control" id="pac-apellidos" maxlength="80" placeholder="Ej: García Torres"/>
-          <div class="form-error" id="pac-apellidos-err"></div>
-        </div>
-
-        <div class="form-group">
-          <label class="form-label">Tipo de Documento <span class="req">*</span></label>
-          <select class="form-control" id="pac-tipo-doc" onchange="onTipoDocChange()">
-            <option value="">Seleccionar…</option>
-            <option value="DNI">DNI</option>
-            <option value="Pasaporte">Pasaporte</option>
-            <option value="Carnet de extranjería">Carnet de extranjería</option>
-          </select>
-          <div class="form-error" id="pac-tipo-doc-err"></div>
-        </div>
-
-        <div class="form-group">
-          <label class="form-label">N° Documento <span class="req">*</span></label>
-          <input type="text" class="form-control" id="pac-doc" placeholder="Ej: 12345678" maxlength="15"/>
-          <div class="form-hint" id="doc-hint">Seleccione el tipo de documento primero</div>
-          <div class="form-error" id="pac-doc-err"></div>
-        </div>
-
-        <div class="form-group">
-          <label class="form-label">Fecha de Nacimiento <span class="req">*</span></label>
-          <input type="date" class="form-control" id="pac-nacimiento" onchange="onNacimientoChange()"/>
-          <div class="form-error" id="pac-nacimiento-err"></div>
-        </div>
-
-        <div class="form-group">
-          <label class="form-label">Edad (calculada)</label>
-          <div class="form-display" id="pac-edad-display">—</div>
-        </div>
-
-        <div class="form-group">
-          <label class="form-label">Teléfono <span class="req">*</span></label>
-          <input type="tel" class="form-control" id="pac-telefono" maxlength="9" placeholder="987654321"/>
-          <div class="form-hint">9 dígitos (celular peruano)</div>
-          <div class="form-error" id="pac-telefono-err"></div>
-        </div>
-
-        <div class="form-group">
-          <label class="form-label">Correo Electrónico <span class="opt">(opcional)</span></label>
-          <input type="email" class="form-control" id="pac-email" placeholder="correo@ejemplo.com"/>
-          <div class="form-error" id="pac-email-err"></div>
-        </div>
-
-        <div class="form-group full">
-          <label class="form-label">Dirección <span class="opt">(opcional)</span></label>
-          <input type="text" class="form-control" id="pac-direccion" maxlength="150" placeholder="Av. Ejemplo 123, Lima"/>
-          <div class="form-error" id="pac-direccion-err"></div>
-        </div>
-
-      </div>
-
-      <!-- Bloque apoderado (menores) -->
-      <div id="bloque-apoderado" style="display:none;margin-bottom:1.25rem;">
-        <div class="alert alert-warn" style="margin-bottom:.85rem">
-          <span class="alert-icon">⚠️</span>
-          <span>El paciente es menor de edad. Se requiere datos del apoderado.</span>
-        </div>
-        <div class="subform">
-          <div class="subform-title">Datos del Apoderado</div>
-          <div class="form-grid">
-            <div class="form-group">
-              <label class="form-label">Nombre del Apoderado <span class="req">*</span></label>
-              <input type="text" class="form-control" id="pac-apoderado" placeholder="Nombre completo"/>
-              <div class="form-error" id="pac-apoderado-err"></div>
+    <div class="app-layout">
+        <aside class="app-sidebar">
+            <div class="sidebar-header">
+                <div class="logo-area">
+                    <div class="logo-mark">M</div>
+                    <div class="logo-text-wrap">
+                        <span class="logo-name">MediCore</span>
+                        <span class="logo-sub">Sistema Clínico</span>
+                    </div>
+                </div>
             </div>
-            <div class="form-group">
-              <label class="form-label">Parentesco <span class="req">*</span></label>
-              <select class="form-control" id="pac-parentesco-apoderado">
-                <option value="">Seleccionar…</option>
-                <option>Padre</option><option>Madre</option>
-                <option>Tutor legal</option><option>Abuelo/a</option><option>Otro</option>
-              </select>
-              <div class="form-error" id="pac-parentesco-apoderado-err"></div>
+            
+            <nav class="app-nav">
+                <a href="index.html" class="nav-item">📊 <span>Inicio</span></a>
+                <a href="pacientes.html" class="nav-item active">👥 <span>Pacientes</span></a>
+                <a href="citas.html" class="nav-item">📅 <span>Citas Médicas</span></a>
+                <a href="sala-espera.html" class="nav-item">⏳ <span>Sala de Espera</span></a>
+                <a href="historial.html" class="nav-item">🩺 <span>Historial Clínico</span></a>
+                <a href="reportes.html" class="nav-item">📈 <span>Reportes</span></a>
+            </nav>
+
+            <div class="sidebar-footer">
+                <button class="btn btn-ghost btn-sm" style="width: 100%; justify-content: flex-start; color: var(--red);" onclick="cerrarSesionSistema()">
+                    🚪 <span>Cerrar Sesión</span>
+                </button>
             </div>
-          </div>
-        </div>
-      </div>
+        </aside>
 
-      <!-- Alergias -->
-      <div class="section-label" style="margin-bottom:.5rem">
-        Alergias <span style="color:var(--red);font-size:1rem;line-height:1">*</span>
-      </div>
-      <div style="font-size:.7rem;color:var(--gray-400);margin-bottom:.75rem">
-        Puedes seleccionar varias. Si no tiene alergias conocidas, marca "Ninguna".
-      </div>
-      <div class="form-group full" style="margin-bottom:1.25rem">
-        <div id="check-alergias" style="display:flex;flex-wrap:wrap;gap:.5rem;">
-          <label class="alergia-pill" data-valor="Ninguna">
-            <input type="checkbox" name="alergia" value="Ninguna" onchange="onAlergiaChange(this)"/>
-            <span class="pill-inner">Ninguna</span>
-          </label>
-          <label class="alergia-pill" data-valor="Penicilina">
-            <input type="checkbox" name="alergia" value="Penicilina" onchange="onAlergiaChange(this)"/>
-            <span class="pill-inner">Penicilina</span>
-          </label>
-          <label class="alergia-pill" data-valor="Ibuprofeno">
-            <input type="checkbox" name="alergia" value="Ibuprofeno" onchange="onAlergiaChange(this)"/>
-            <span class="pill-inner">Ibuprofeno</span>
-          </label>
-          <label class="alergia-pill" data-valor="Paracetamol">
-            <input type="checkbox" name="alergia" value="Paracetamol" onchange="onAlergiaChange(this)"/>
-            <span class="pill-inner">Paracetamol</span>
-          </label>
-          <label class="alergia-pill" data-valor="Mariscos">
-            <input type="checkbox" name="alergia" value="Mariscos" onchange="onAlergiaChange(this)"/>
-            <span class="pill-inner">Mariscos</span>
-          </label>
-          <label class="alergia-pill" data-valor="Lactosa">
-            <input type="checkbox" name="alergia" value="Lactosa" onchange="onAlergiaChange(this)"/>
-            <span class="pill-inner">Lactosa</span>
-          </label>
-          <label class="alergia-pill" data-valor="Polen">
-            <input type="checkbox" name="alergia" value="Polen" onchange="onAlergiaChange(this)"/>
-            <span class="pill-inner">Polen</span>
-          </label>
-          <label class="alergia-pill" data-valor="Otro">
-            <input type="checkbox" name="alergia" value="Otro" onchange="onAlergiaChange(this)"/>
-            <span class="pill-inner">✏️ Otro</span>
-          </label>
-        </div>
+        <main class="app-main">
+            <header class="main-header">
+                <div class="header-title-wrap">
+                    <h1>Módulo de Pacientes</h1>
+                    <p>Registro y control de historias clínicas de la institución</p>
+                </div>
+                <div class="header-actions">
+                    <button class="btn btn-primary" onclick="abrirNuevoPacienteModal()">➕ Nuevo Paciente</button>
+                </div>
+            </header>
 
-        <div class="form-error" id="alergias-err" style="margin-top:.5rem"></div>
+            <section class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-icon" style="background: var(--blue-pale); color: var(--blue);">👥</div>
+                    <div class="stat-info">
+                        <span class="stat-label">Total Pacientes</span>
+                        <h3 class="stat-value" id="st-total">0</h3>
+                    </div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon" style="background: var(--green-pale); color: var(--green);">🧑</div>
+                    <div class="stat-info">
+                        <span class="stat-label">Adultos</span>
+                        <h3 class="stat-value" id="st-adultos">0</h3>
+                    </div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon" style="background: var(--orange-pale); color: var(--orange);">👶</div>
+                    <div class="stat-info">
+                        <span class="stat-label">Menores de Edad</span>
+                        <h3 class="stat-value" id="st-menores">0</h3>
+                    </div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon" style="background: var(--red-pale); color: var(--red);">⚠️</div>
+                    <div class="stat-info">
+                        <span class="stat-label">Con Alergias</span>
+                        <h3 class="stat-value" id="st-alergias">0</h3>
+                    </div>
+                </div>
+            </section>
 
-        <div id="bloque-otro-alergia" style="display:none;margin-top:.75rem;">
-          <label class="form-label" style="margin-bottom:.35rem">
-            Especifica la alergia <span style="color:var(--red)">*</span>
-          </label>
-          <input type="text" class="form-control" id="pac-alergia-otro"
-            placeholder="Ej: Látex, Sulfas, Aspirina…" maxlength="100"/>
-          <div class="form-error" id="pac-alergia-otro-err"></div>
-        </div>
+            <div class="content-card">
+                <div class="filter-bar">
+                    <div class="search-box">
+                        <span class="search-icon">🔍</span>
+                        <input type="text" id="search-pac" placeholder="Buscar por nombre, apellido o documento..." oninput="renderTable()">
+                    </div>
+                    <div class="filter-group">
+                        <select id="filter-alergia" class="form-control" onchange="renderTable()">
+                            <option value="todos">Todas las condiciones</option>
+                            <option value="si">Con alergias registradas</option>
+                            <option value="no">Sin alergias</option>
+                        </select>
+                    </div>
+                </div>
 
-        <div id="alergias-resumen" style="margin-top:.65rem;display:none">
-          <span style="font-size:.68rem;font-weight:600;color:var(--gray-500);text-transform:uppercase;letter-spacing:.08em;">
-            Seleccionadas:
-          </span>
-          <span id="alergias-resumen-texto" style="font-size:.75rem;color:var(--blue);font-weight:600;margin-left:.35rem;"></span>
-        </div>
-      </div>
+                <div class="table-responsive">
+                    <table class="table">
+                        <thead>
+                            <tr>
+                                <th>Código</th>
+                                <th>Paciente</th>
+                                <th>Documento</th>
+                                <th>Edad</th>
+                                <th>Teléfono</th>
+                                <th>Alergias</th>
+                                <th style="width: 120px;">Acciones</th>
+                            </tr>
+                        </thead>
+                        <tbody id="tbody-pac">
+                            </tbody>
+                    </table>
+                </div>
 
-      <!-- Contacto de emergencia -->
-      <div class="section-label" style="margin-bottom:.75rem">Contacto de Emergencia <span style="color:var(--red);font-size:1rem">*</span></div>
-      <div class="subform" style="margin-bottom:1.25rem">
-        <div class="form-grid">
-          <div class="form-group">
-            <label class="form-label">Nombre <span class="req">*</span></label>
-            <input type="text" class="form-control" id="pac-emerg-nombre" placeholder="Nombre del contacto" maxlength="80"/>
-            <div class="form-error" id="pac-emerg-nombre-err"></div>
-          </div>
-          <div class="form-group">
-            <label class="form-label">Parentesco <span class="req">*</span></label>
-            <select class="form-control" id="pac-emerg-parentesco">
-              <option value="">Seleccionar…</option>
-              <option>Cónyuge</option><option>Padre</option><option>Madre</option>
-              <option>Hijo/a</option><option>Hermano/a</option><option>Amigo/a</option>
-              <option>Tutor legal</option><option>Otro</option>
-            </select>
-            <div class="form-error" id="pac-emerg-parentesco-err"></div>
-          </div>
-          <div class="form-group">
-            <label class="form-label">Teléfono <span class="req">*</span></label>
-            <input type="tel" class="form-control" id="pac-emerg-tel" maxlength="9" placeholder="987654321"/>
-            <div class="form-error" id="pac-emerg-tel-err"></div>
-          </div>
-        </div>
-      </div>
+                <div id="empty-pac" class="empty-state" style="display: none;">
+                    <div class="empty-icon">👥</div>
+                    <h4>No se encontraron pacientes</h4>
+                    <p>No hay registros que coincidan con los criterios de búsqueda establecidos.</p>
+                </div>
+            </div>
 
-    </form>
-
-    <div class="modal-footer">
-      <button class="btn btn-ghost" onclick="closeModal('modal-nuevo')">Cancelar</button>
-      <button class="btn btn-primary" onclick="guardarPaciente()">💾 Guardar Paciente</button>
+            <section style="margin-top: 1.5rem; display: grid; grid-template-columns: 2fr 1fr; gap: 1.5rem;">
+                <div class="content-card">
+                    <h3 style="font-size: .95rem; margin-bottom: 1rem; color: var(--navy)">Historial de Cambios Recientes</h3>
+                    <div class="patient-list-v" id="lista-recientes">
+                        </div>
+                </div>
+                <div class="content-card" style="background: linear-gradient(135deg, var(--navy), #0F172A); color: white; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; padding: 2rem;">
+                    <div style="font-size: 2rem; margin-bottom: .5rem;">🛡️</div>
+                    <h4 style="margin-bottom: .5rem; font-weight: 600;">Persistencia Asegurada</h4>
+                    <p style="font-size: .78rem; opacity: .8; max-width: 220px; line-height: 1.4;">Los expedientes médicos están cifrados y respaldados de manera directa en la nube distribuida.</p>
+                </div>
+            </section>
+        </main>
     </div>
-  </div>
-</div>
 
-<!-- ══════════════ MODAL DETALLE ══════════════ -->
-<div class="modal-overlay" id="modal-detalle">
-  <div class="modal-box">
-    <div class="modal-header">
-      <div>
-        <div class="modal-title" id="det-titulo">Ficha del Paciente</div>
-        <div class="modal-subtitle" id="det-codigo"></div>
-      </div>
-      <button class="modal-close" onclick="closeModal('modal-detalle')">✕</button>
-    </div>
-    <div id="det-contenido"></div>
-    <div class="modal-footer">
-      <button class="btn btn-ghost" onclick="closeModal('modal-detalle')">Cerrar</button>
-      <button class="btn btn-outline" id="det-btn-editar">✏️ Editar</button>
-    </div>
-  </div>
-</div>
+    <div id="modal-nuevo" class="modal-overlay">
+        <div class="modal-box modal-lg">
+            <div class="modal-header">
+                <div>
+                    <h2 id="pac-title">Nuevo Paciente</h2>
+                    <p style="font-size: .74rem; color: var(--gray-400); margin-top: .15rem">Complete todos los datos de filiación del paciente</p>
+                </div>
+                <button class="modal-close" onclick="closeModal('modal-nuevo')">✕</button>
+            </div>
+            <div class="modal-body">
+                <form id="form-paciente" onsubmit="event.preventDefault();">
+                    <input type="hidden" id="pac-codigo-edit">
+                    
+                    <div class="form-section-title">📌 Datos de Identidad</div>
+                    <div class="form-grid">
+                        <div class="form-group">
+                            <label class="form-label">Código Asignado</label>
+                            <input type="text" id="pac-codigo" class="form-control" readonly style="background: var(--gray-50); font-weight: 700; color: var(--blue);">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Tipo Documento <span class="req">*</span></label>
+                            <select id="pac-tipo-doc" class="form-control" onchange="onTipoDocChange()">
+                                <option value="">Seleccione...</option>
+                                <option value="DNI">DNI (Persona Natural)</option>
+                                <option value="Pasaporte">Pasaporte Internacional</option>
+                                <option value="Carnet de extranjería">Carnet de Extranjería</option>
+                            </select>
+                            <div class="form-error" id="pac-tipo-doc-err"></div>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Número Documento <span class="req">*</span></label>
+                            <input type="text" id="pac-doc" class="form-control" placeholder="Ingrese número...">
+                            <span class="field-hint" id="doc-hint">Seleccione el tipo de documento primero</span>
+                            <div class="form-error" id="pac-doc-err"></div>
+                        </div>
+                    </div>
 
-<div id="toast-container"></div>
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script src="shared.js"></script>
-<script src="pacientes.js"></script>
+                    <div class="form-grid" style="margin-top: .75rem;">
+                        <div class="form-group">
+                            <label class="form-label">Nombres <span class="req">*</span></label>
+                            <input type="text" id="pac-nombres" class="form-control" placeholder="Nombres del paciente">
+                            <div class="form-error" id="pac-nombres-err"></div>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Apellidos Paterno y Materno <span class="req">*</span></label>
+                            <input type="text" id="pac-apellidos" class="form-control" placeholder="Apellidos completos">
+                            <div class="form-error" id="pac-apellidos-err"></div>
+                        </div>
+                    </div>
+
+                    <div class="form-grid" style="margin-top: .75rem;">
+                        <div class="form-group">
+                            <label class="form-label">Fecha de Nacimiento <span class="req">*</span></label>
+                            <input type="date" id="pac-nacimiento" class="form-control" onchange="onNacimientoChange()">
+                            <div class="form-error" id="pac-nacimiento-err"></div>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Edad Calculada</label>
+                            <div id="pac-edad-display" class="form-control" style="background: var(--gray-50); font-weight: 600; display: flex; align-items: center;">—</div>
+                        </div>
+                    </div>
+
+                    <div id="bloque-apoderado" style="display: none; background: var(--orange-pale); border: 1px dashed var(--orange); padding: 1rem; border-radius: var(--radius); margin-top: 1rem;">
+                        <div style="font-size: .75rem; font-weight: 700; color: #92400E; margin-bottom: .5rem; display: flex; align-items: center; gap: .3rem;">🛡️ Información del Apoderado Obligatoria (Menor de Edad)</div>
+                        <div class="form-grid">
+                            <div class="form-group">
+                                <label class="form-label" style="color: #92400E">Nombre Completo Apoderado <span class="req">*</span></label>
+                                <input type="text" id="pac-apoderado" class="form-control" placeholder="Nombre completo de la madre, padre o tutor">
+                                <div class="form-error" id="pac-apoderado-err"></div>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label" style="color: #92400E">Parentesco <span class="req">*</span></label>
+                                <select id="pac-parentesco-apoderado" class="form-control">
+                                    <option value="">Seleccione...</option>
+                                    <option value="Madre">Madre</option>
+                                    <option value="Padre">Padre</option>
+                                    <option value="Tutor Legal">Tutor Legal</option>
+                                </select>
+                                <div class="form-error" id="pac-parentesco-apoderado-err"></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="form-section-title" style="margin-top: 1.5rem;">📞 Datos de Contacto y Ubicación</div>
+                    <div class="form-grid">
+                        <div class="form-group">
+                            <label class="form-label">Teléfono Celular <span class="req">*</span></label>
+                            <input type="text" id="pac-telefono" class="form-control" placeholder="Ej: 987654321" maxlength="9">
+                            <div class="form-error" id="pac-telefono-err"></div>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Correo Electrónico</label>
+                            <input type="email" id="pac-email" class="form-control" placeholder="ejemplo@correo.com">
+                            <div class="form-error" id="pac-email-err"></div>
+                        </div>
+                    </div>
+                    <div class="form-group" style="margin-top: .75rem;">
+                        <label class="form-label">Dirección de Residencia Doméstica</label>
+                        <input type="text" id="pac-direccion" class="form-control" placeholder="Av. Los Universitarios 123, Lima">
+                    </div>
+
+                    <div class="form-section-title" style="margin-top: 1.5rem;">⚠️ Restricciones Médicas y Alergias</div>
+                    <div class="form-group">
+                        <label class="form-label">Seleccione todas las condiciones conocidas <span class="req">*</span></label>
+                        <div class="checkbox-group-grid" id="check-alergias">
+                            <label class="checkbox-label"><input type="checkbox" value="Ninguna" onchange="onAlergiaChange(this)"> Ninguna</label>
+                            <label class="checkbox-label"><input type="checkbox" value="Penicilina" onchange="onAlergiaChange(this)"> Penicilina</label>
+                            <label class="checkbox-label"><input type="checkbox" value="Aspirina" onchange="onAlergiaChange(this)"> Aspirina / AINEs</label>
+                            <label class="checkbox-label"><input type="checkbox" value="Mariscos" onchange="onAlergiaChange(this)"> Mariscos / Yodo</label>
+                            <label class="checkbox-label"><input type="checkbox" value="Látex" onchange="onAlergiaChange(this)"> Componentes de Látex</label>
+                            <label class="checkbox-label"><input type="checkbox" value="Otro" onchange="onAlergiaChange(this)"> Otra Restricción</label>
+                        </div>
+                        <div class="form-error" id="alergias-err"></div>
+                    </div>
+
+                    <div id="bloque-otro-alergia" class="form-group" style="display: none; margin-top: .5rem;">
+                        <label class="form-label">Especifique la restricción alérgica personalizada <span class="req">*</span></label>
+                        <input type="text" id="pac-alergia-otro" class="form-control" placeholder="Ej: Alergia al metamizol, polen, etc.">
+                        <div class="form-error" id="pac-alergia-otro-err"></div>
+                    </div>
+
+                    <div id="alergias-resumen" class="alert-summary" style="display: none; margin-top: .75rem;">
+                        <strong>Resumen Clínico:</strong> <span id="alergias-resumen-texto">—</span>
+                    </div>
+
+                    <div class="form-section-title" style="margin-top: 1.5rem;">🚨 Ficha de Contacto de Emergencia</div>
+                    <div class="form-grid">
+                        <div class="form-group">
+                            <label class="form-label">Nombre Completo <span class="req">*</span></label>
+                            <input type="text" id="pac-emerg-nombre" class="form-control" placeholder="Nombre completo del contacto">
+                            <div class="form-error" id="pac-emerg-nombre-err"></div>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Parentesco Relación <span class="req">*</span></label>
+                            <select id="pac-emerg-parentesco" class="form-control">
+                                <option value="">Seleccione...</option>
+                                <option value="Cónyuge">Cónyuge / Pareja</option>
+                                <option value="Madre">Madre</option>
+                                <option value="Padre">Padre</option>
+                                <option value="Hermano/a">Hermano/a</option>
+                                <option value="Hijo/a">Hijo/a</option>
+                                <option value="Otro">Otro Familiar</option>
+                            </select>
+                            <div class="form-error" id="pac-emerg-parentesco-err"></div>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Teléfono de Auxilio <span class="req">*</span></label>
+                            <input type="text" id="pac-emerg-tel" class="form-control" placeholder="Número de contacto rápido" maxlength="9">
+                            <div class="form-error" id="pac-emerg-tel-err"></div>
+                        </div>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-outline" onclick="closeModal('modal-nuevo')">Cancelar</button>
+                <button class="btn btn-primary" onclick="guardarPaciente()">💾 Guardar Expediente</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="modal-detalle" class="modal-overlay">
+        <div class="modal-box">
+            <div class="modal-header" style="background: var(--gray-50); border-bottom: 1px solid var(--gray-200);">
+                <div>
+                    <h2 id="det-titulo" style="color: var(--navy);">—</h2>
+                    <p id="det-codigo" class="table-code" style="display: inline-block; margin-top: .25rem; font-size: .75rem;">—</p>
+                </div>
+                <button class="modal-close" onclick="closeModal('modal-detalle')">✕</button>
+            </div>
+            <div class="modal-body" id="det-contenido">
+                </div>
+            <div class="modal-footer" style="background: var(--gray-50); border-top: 1px solid var(--gray-200);">
+                <button class="btn btn-outline" onclick="closeModal('modal-detalle')">Cerrar</button>
+                <button class="btn btn-primary" id="det-btn-editar">✏️ Modificar Ficha</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="shared.js"></script>
+    <script src="pacientes.js"></script>
 </body>
 </html>

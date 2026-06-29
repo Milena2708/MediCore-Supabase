@@ -1,608 +1,542 @@
 // ══════════════════════════════════════════
-//  pacientes.js — Lógica del módulo Pacientes
-//  Depende de: shared.js (DB, helpers, modals)
+//  pacientes.js — Lógica de Negocio Asíncrona con Supabase
+//  MediCore Grupo 1 - Sin dependencias locales
 // ══════════════════════════════════════════
 
-// ─── Estado ────────────────────────────────────────────────
 let alergiasSeleccionadas = [];
-let modoEditar = false;
 
-// ─── Inicialización ────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
-  renderTable();
-  renderRecientes();
-  updateStats();
+    // Inicializar renderizado inicial automático desde la nube
+    renderTable();
+    renderRecientes();
+    updateStats();
 
-  // Límite de fecha máxima = hoy
-  const nacInput = document.getElementById('pac-nacimiento');
-  if (nacInput) nacInput.max = new Date().toISOString().split('T')[0];
+    const nacInput = document.getElementById('pac-nacimiento');
+    if (nacInput) nacInput.max = new Date().toISOString().split('T')[0];
 
-  // Actualizar resumen cuando el usuario escribe en "Otro"
-  const otroInput = document.getElementById('pac-alergia-otro');
-  if (otroInput) otroInput.addEventListener('input', actualizarResumenAlergias);
-
-  // Asegurar que al abrir "Nuevo Paciente" el form esté limpio
-  const btnNuevo = document.querySelector('.btn-white[onclick="openModal(\'modal-nuevo\')"]');
-  if (btnNuevo) btnNuevo.addEventListener('click', resetForm);
+    const otroInput = document.getElementById('pac-alergia-otro');
+    if (otroInput) {
+        otroInput.addEventListener('input', actualizarResumenAlergias);
+    }
 });
 
-// ─── Alergias ──────────────────────────────────────────────
+async function abrirNuevoPacienteModal() {
+    resetForm();
+    
+    // Generación dinámica y secuencial del PAC en base a la realidad de la BD
+    const { data: pacientes, error } = await supabase
+        .from('pacientes')
+        .select('codigo');
 
-/**
- * Se dispara al hacer clic en cualquier pill de alergia.
- * Gestiona la exclusividad de "Ninguna" y actualiza el estado.
- * @param {HTMLInputElement} checkbox
- */
+    let siguienteCodigo = 'PAC001';
+    if (!error && pacientes && pacientes.length > 0) {
+        const nums = pacientes.map(p => parseInt((p.codigo || '').replace('PAC', '')) || 0);
+        const maxNum = Math.max(...nums) + 1;
+        siguienteCodigo = 'PAC' + String(maxNum).padStart(3, '0');
+    }
+
+    document.getElementById('pac-codigo').value = siguienteCodigo;
+    document.getElementById('pac-title').textContent = 'Nuevo Paciente';
+    document.getElementById('pac-codigo-edit').value = '';
+    openModal('modal-nuevo');
+}
+
 function onAlergiaChange(checkbox) {
-  const valor = checkbox.value;
-  const checks = document.querySelectorAll('#check-alergias input[type="checkbox"]');
+    const valor = checkbox.value;
 
-  if (valor === 'Ninguna') {
-    // Desmarcar todas las demás si se elige Ninguna
-    if (checkbox.checked) {
-      checks.forEach(cb => { if (cb.value !== 'Ninguna') cb.checked = false; });
+    if (valor === 'Ninguna' && checkbox.checked) {
+        document.querySelectorAll('#check-alergias input[type="checkbox"]').forEach(cb => {
+            if (cb.value !== 'Ninguna') cb.checked = false;
+        });
+        alergiasSeleccionadas = ['Ninguna'];
+        document.getElementById('bloque-otro-alergia').style.display = 'none';
+    } else if (checkbox.checked) {
+        document.querySelectorAll('#check-alergias input[type="checkbox"]').forEach(cb => {
+            if (cb.value === 'Ninguna') cb.checked = false;
+        });
+        if (valor === 'Otro') {
+            document.getElementById('bloque-otro-alergia').style.display = 'block';
+        }
+        alergiasSeleccionadas = alergiasSeleccionadas.filter(a => a !== 'Ninguna');
+        if (!alergiasSeleccionadas.includes(valor)) {
+            alergiasSeleccionadas.push(valor);
+        }
+    } else {
+        if (valor === 'Otro') {
+            document.getElementById('bloque-otro-alergia').style.display = 'none';
+            document.getElementById('pac-alergia-otro').value = '';
+        }
+        alergiasSeleccionadas = alergiasSeleccionadas.filter(a => a !== valor);
     }
-  } else {
-    // Si se marca cualquier otra opción, desmarcar Ninguna
-    if (checkbox.checked) {
-      checks.forEach(cb => { if (cb.value === 'Ninguna') cb.checked = false; });
-    }
-  }
-
-  // Recalcular lista de alergias seleccionadas
-  alergiasSeleccionadas = [];
-  checks.forEach(cb => { if (cb.checked) alergiasSeleccionadas.push(cb.value); });
-
-  // Mostrar/ocultar campo de texto "Otro"
-  const mostrarOtro = alergiasSeleccionadas.includes('Otro');
-  document.getElementById('bloque-otro-alergia').style.display = mostrarOtro ? 'block' : 'none';
-  if (!mostrarOtro) document.getElementById('pac-alergia-otro').value = '';
-
-  // Limpiar mensaje de error si ya hay selección
-  const errEl = document.getElementById('alergias-err');
-  if (alergiasSeleccionadas.length) {
-    errEl.style.display = 'none';
-    errEl.textContent = '';
-  }
-
-  actualizarResumenAlergias();
+    actualizarResumenAlergias();
 }
 
-/**
- * Muestra debajo de los pills un resumen legible de lo seleccionado.
- */
 function actualizarResumenAlergias() {
-  const resumen = document.getElementById('alergias-resumen');
-  const texto   = document.getElementById('alergias-resumen-texto');
-
-  if (!alergiasSeleccionadas.length) {
-    resumen.style.display = 'none';
-    return;
-  }
-
-  resumen.style.display = 'block';
-  const etiquetas = alergiasSeleccionadas.map(a => {
-    if (a === 'Otro') {
-      const val = document.getElementById('pac-alergia-otro').value.trim();
-      return val ? `Otro: ${val}` : 'Otro';
+    let listaParaMostrar = [...alergiasSeleccionadas];
+    
+    if (alergiasSeleccionadas.includes('Otro')) {
+        const textoOtro = document.getElementById('pac-alergia-otro').value.trim();
+        listaParaMostrar = listaParaMostrar.filter(a => a !== 'Otro');
+        listaParaMostrar.push(textoOtro ? `Otro: ${textoOtro}` : 'Otro (...)');
     }
-    return a;
-  });
-  texto.textContent = etiquetas.join(', ');
+
+    const resumenBox = document.getElementById('alergias-resumen');
+    const resumenText = document.getElementById('alergias-resumen-texto');
+
+    if (listaParaMostrar.length > 0 && !alergiasSeleccionadas.includes('Ninguna')) {
+        resumenBox.style.display = 'block';
+        resumenText.textContent = listaParaMostrar.join(', ');
+    } else {
+        resumenBox.style.display = 'none';
+    }
 }
 
-// ─── Documento ─────────────────────────────────────────────
-
-/**
- * Actualiza el hint del campo N° Documento según el tipo seleccionado.
- */
 function onTipoDocChange() {
-  const tipo = document.getElementById('pac-tipo-doc').value;
-  const hint = document.getElementById('doc-hint');
+    const tipo = document.getElementById('pac-tipo-doc').value;
+    const docInput = document.getElementById('pac-doc');
+    const hint = document.getElementById('doc-hint');
 
-  if (tipo === 'DNI')      hint.textContent = 'Exactamente 8 dígitos numéricos';
-  else if (tipo)           hint.textContent = 'Entre 6 y 15 caracteres alfanuméricos';
-  else                     hint.textContent = 'Seleccione el tipo de documento primero';
+    docInput.value = '';
+    clearFieldError('pac-doc');
 
-  clearFieldError('pac-doc');
+    if (tipo === 'DNI') {
+        docInput.maxLength = 8;
+        hint.textContent = 'Ingrese 8 dígitos numéricos';
+    } else if (tipo === 'Pasaporte') {
+        docInput.maxLength = 12;
+        hint.textContent = 'Máximo 12 caracteres alfanuméricos';
+    } else if (tipo === 'Carnet de extranjería') {
+        docInput.maxLength = 15;
+        hint.textContent = 'Máximo 15 caracteres numéricos';
+    } else {
+        hint.textContent = 'Seleccione el tipo de documento primero';
+    }
 }
 
-// ─── Nacimiento ────────────────────────────────────────────
-
-/**
- * Calcula la edad y muestra/oculta el bloque de apoderado
- * cuando la fecha de nacimiento cambia.
- */
 function onNacimientoChange() {
-  const val     = document.getElementById('pac-nacimiento').value;
-  const edad    = calcAge(val);
-  const display = document.getElementById('pac-edad-display');
+    const fechaStr = document.getElementById('pac-nacimiento').value;
+    const display = document.getElementById('pac-edad-display');
+    const bloqueApoderado = document.getElementById('bloque-apoderado');
 
-  if (edad !== null && edad >= 0) {
-    display.textContent = `${edad} año${edad !== 1 ? 's' : ''}`;
-    document.getElementById('bloque-apoderado').style.display = isMinor(val) ? 'block' : 'none';
-  } else {
-    display.textContent = '—';
-    document.getElementById('bloque-apoderado').style.display = 'none';
-  }
+    if (!fechaStr) {
+        display.textContent = '—';
+        bloqueApoderado.style.display = 'none';
+        return;
+    }
+
+    const edad = calcAge(fechaStr);
+    display.textContent = `${edad} años`;
+
+    if (edad < 18) {
+        bloqueApoderado.style.display = 'block';
+    } else {
+        bloqueApoderado.style.display = 'none';
+    }
+    clearFieldError('pac-nacimiento');
 }
 
-// ─── Validación ────────────────────────────────────────────
-
-/**
- * Valida todos los campos del formulario de paciente.
- * @returns {boolean} true si el formulario es válido
- */
 function validarFormPaciente() {
-  clearAllErrors('form-paciente');
-  let ok = true;
+    clearAllErrors('form-paciente');
+    let ok = true;
 
-  const nombres            = document.getElementById('pac-nombres').value.trim();
-  const apellidos          = document.getElementById('pac-apellidos').value.trim();
-  const tipoDoc            = document.getElementById('pac-tipo-doc').value;
-  const doc                = document.getElementById('pac-doc').value.trim();
-  const nacimiento         = document.getElementById('pac-nacimiento').value;
-  const telefono           = document.getElementById('pac-telefono').value.trim();
-  const email              = document.getElementById('pac-email').value.trim();
-  const direccion          = document.getElementById('pac-direccion').value.trim();
-  const emergNombre        = document.getElementById('pac-emerg-nombre').value.trim();
-  const emergParentesco    = document.getElementById('pac-emerg-parentesco').value;
-  const emergTel           = document.getElementById('pac-emerg-tel').value.trim();
+    const nombres = document.getElementById('pac-nombres').value.trim();
+    const apellidos = document.getElementById('pac-apellidos').value.trim();
+    const tipoDoc = document.getElementById('pac-tipo-doc').value;
+    const doc = document.getElementById('pac-doc').value.trim();
+    const nacimiento = document.getElementById('pac-nacimiento').value;
+    const telefono = document.getElementById('pac-telefono').value.trim();
+    const email = document.getElementById('pac-email').value.trim();
 
-  // Nombres
-  if (!nombres)                          { showFieldError('pac-nombres', 'El nombre es obligatorio'); ok = false; }
-  else if (nombres.length < 2)           { showFieldError('pac-nombres', 'Mínimo 2 caracteres'); ok = false; }
-  else if (/^\d+$/.test(nombres))        { showFieldError('pac-nombres', 'No puede contener solo números'); ok = false; }
-  else                                     markFieldValid('pac-nombres');
+    if (!nombres) { showFieldError('pac-nombres', 'Los nombres son obligatorios'); ok = false; }
+    if (!apellidos) { showFieldError('pac-apellidos', 'Los apellidos son obligatorios'); ok = false; }
+    if (!tipoDoc) { showFieldError('pac-tipo-doc', 'Seleccione el tipo de documento'); ok = false; }
 
-  // Apellidos
-  if (!apellidos)                        { showFieldError('pac-apellidos', 'Los apellidos son obligatorios'); ok = false; }
-  else if (apellidos.length < 2)         { showFieldError('pac-apellidos', 'Mínimo 2 caracteres'); ok = false; }
-  else if (/^\d+$/.test(apellidos))      { showFieldError('pac-apellidos', 'No puede contener solo números'); ok = false; }
-  else                                     markFieldValid('pac-apellidos');
+    if (!doc) {
+        showFieldError('pac-doc', 'El número de documento es obligatorio'); ok = false;
+    } else if (tipoDoc === 'DNI' && (!/^\d{8}$/.test(doc))) {
+        showFieldError('pac-doc', 'El DNI debe tener exactamente 8 dígitos'); ok = false;
+    }
 
-  // Tipo de documento
-  if (!tipoDoc)  { showFieldError('pac-tipo-doc', 'Seleccione el tipo de documento'); ok = false; }
-  else             markFieldValid('pac-tipo-doc');
+    if (!nacimiento) { showFieldError('pac-nacimiento', 'La fecha de nacimiento es obligatoria'); ok = false; }
 
-  // Número de documento
-  if (!doc) {
-    showFieldError('pac-doc', 'El número de documento es obligatorio');
-    ok = false;
-  } else if (tipoDoc === 'DNI' && !/^\d{8}$/.test(doc)) {
-    showFieldError('pac-doc', 'El DNI debe tener exactamente 8 dígitos');
-    ok = false;
-  } else if (tipoDoc !== 'DNI' && (doc.length < 6 || doc.length > 15)) {
-    showFieldError('pac-doc', 'Debe tener entre 6 y 15 caracteres');
-    ok = false;
-  } else {
+    if (!telefono) {
+        showFieldError('pac-telefono', 'El teléfono es obligatorio'); ok = false;
+    } else if (!/^9\d{8}$/.test(telefono)) {
+        showFieldError('pac-telefono', 'Celular inválido (Debe tener 9 dígitos e iniciar con 9)'); ok = false;
+    }
+
+    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        showFieldError('pac-email', 'Formato de correo inválido'); ok = false;
+    }
+
+    if (nacimiento && calcAge(nacimiento) < 18) {
+        const apoderado = document.getElementById('pac-apoderado').value.trim();
+        const parentesco = document.getElementById('pac-parentesco-apoderado').value;
+        if (!apoderado) { showFieldError('pac-apoderado', 'Nombre del apoderado obligatorio'); ok = false; }
+        if (!parentesco) { showFieldError('pac-parentesco-apoderado', 'Seleccione el parentesco'); ok = false; }
+    }
+
+    if (alergiasSeleccionadas.length === 0) {
+        showFieldError('alergias', 'Seleccione al menos una opción o marque "Ninguna"'); ok = false;
+    } else if (alergiasSeleccionadas.includes('Otro') && !document.getElementById('pac-alergia-otro').value.trim()) {
+        showFieldError('pac-alergia-otro', 'Especifique la restricción alérgica'); ok = false;
+    }
+
+    const emergNombre = document.getElementById('pac-emerg-nombre').value.trim();
+    const emergParent = document.getElementById('pac-emerg-parentesco').value;
+    const emergTel = document.getElementById('pac-emerg-tel').value.trim();
+
+    if (!emergNombre) { showFieldError('pac-emerg-nombre', 'El nombre es obligatorio'); ok = false; }
+    if (!emergParent) { showFieldError('pac-emerg-parentesco', 'Seleccione el parentesco'); ok = false; }
+    if (!emergTel) {
+        showFieldError('pac-emerg-tel', 'El teléfono de emergencia es obligatorio'); ok = false;
+    } else if (!/^9\d{8}$/.test(emergTel)) {
+        showFieldError('pac-emerg-tel', 'Debe ser un número celular válido de 9 dígitos'); ok = false;
+    }
+
+    return ok;
+}
+
+async function guardarPaciente() {
+    if (!validarFormPaciente()) { 
+        showToast('Corrija los errores en el formulario', 'error'); 
+        return; 
+    }
+
     const editCodigo = document.getElementById('pac-codigo-edit').value;
-    const dup = DB.get('pacientes').some(p => p.documento === doc && p.codigo !== editCodigo);
-    if (dup) { showFieldError('pac-doc', 'Este documento ya está registrado'); ok = false; }
-    else       markFieldValid('pac-doc');
-  }
-
-  // Fecha de nacimiento
-  if (!nacimiento) {
-    showFieldError('pac-nacimiento', 'La fecha de nacimiento es obligatoria');
-    ok = false;
-  } else if (new Date(nacimiento) > new Date()) {
-    showFieldError('pac-nacimiento', 'No se permiten fechas futuras');
-    ok = false;
-  } else {
-    markFieldValid('pac-nacimiento');
-  }
-
-  // Teléfono
-  if (!telefono)                  { showFieldError('pac-telefono', 'El teléfono es obligatorio'); ok = false; }
-  else if (!/^\d{9}$/.test(telefono)) { showFieldError('pac-telefono', 'Debe tener exactamente 9 dígitos'); ok = false; }
-  else                              markFieldValid('pac-telefono');
-
-  // Email (opcional)
-  if (email && !Validate.email(email)) {
-    showFieldError('pac-email', 'Formato de correo inválido');
-    ok = false;
-  }
-
-  // Dirección (opcional, mínimo 5 caracteres si se completa)
-  if (direccion && direccion.length < 5) {
-    showFieldError('pac-direccion', 'La dirección es demasiado corta');
-    ok = false;
-  }
-
-  // Alergias — leer directamente desde los checkboxes del DOM
-  alergiasSeleccionadas = [];
-  document.querySelectorAll('#check-alergias input[type="checkbox"]:checked').forEach(cb => {
-    alergiasSeleccionadas.push(cb.value);
-  });
-  if (!alergiasSeleccionadas.length) {
-    const errEl = document.getElementById('alergias-err');
-    errEl.textContent = 'Seleccione al menos una opción de alergias';
-    errEl.style.display = 'block';
-    ok = false;
-  }
-  if (alergiasSeleccionadas.includes('Otro')) {
-    const otro = document.getElementById('pac-alergia-otro').value.trim();
-    if (!otro) { showFieldError('pac-alergia-otro', 'Especifique la alergia'); ok = false; }
-  }
-
-  // Apoderado (obligatorio si el paciente es menor de edad)
-  if (nacimiento && isMinor(nacimiento)) {
-    const apoderado      = document.getElementById('pac-apoderado').value.trim();
-    const parentApoderado = document.getElementById('pac-parentesco-apoderado').value;
-    if (!apoderado || apoderado.length < 3) {
-      showFieldError('pac-apoderado', 'Nombre del apoderado requerido (mínimo 3 caracteres)');
-      ok = false;
+    const nacimiento = document.getElementById('pac-nacimiento').value;
+    
+    let datosApoderado = null;
+    const esMenor = document.getElementById('bloque-apoderado').style.display === 'block';
+    if (esMenor) {
+        datosApoderado = {
+            nombre: document.getElementById('pac-apoderado').value.trim(),
+            parentesco: document.getElementById('pac-parentesco-apoderado').value
+        };
     }
-    if (!parentApoderado) {
-      showFieldError('pac-parentesco-apoderado', 'Seleccione el parentesco');
-      ok = false;
+
+    let listaAlergiasFinal = [...alergiasSeleccionadas];
+    if (listaAlergiasFinal.includes('Otro')) {
+        const especificarOtro = document.getElementById('pac-alergia-otro').value.trim();
+        listaAlergiasFinal = listaAlergiasFinal.filter(a => a !== 'Otro');
+        listaAlergiasFinal.push(`Otro: ${especificarOtro}`);
     }
-  }
 
-  // Contacto de emergencia
-  if (!emergNombre || emergNombre.length < 3) { showFieldError('pac-emerg-nombre',     'Nombre requerido (mínimo 3 caracteres)'); ok = false; }
-  if (!emergParentesco)                        { showFieldError('pac-emerg-parentesco', 'Seleccione el parentesco'); ok = false; }
-  if (!emergTel || !/^\d{9}$/.test(emergTel)) { showFieldError('pac-emerg-tel',        'El teléfono debe tener 9 dígitos'); ok = false; }
-
-  return ok;
-}
-
-// ─── Guardar paciente ──────────────────────────────────────
-
-/**
- * Valida y persiste el paciente (nuevo o edición) en la BD local.
- */
-async function guardarPaciente() {
-  if (!validarForm()) { 
-    showToast('Corrija los errores del formulario', 'error'); 
-    return; 
-  }
-
-  const editCodigo = document.getElementById('pac-codigo-edit').value;
-  
-  // Capturar estructura flexible del apoderado si aplica
-  let datosApoderado = null;
-  const esMenor = document.getElementById('bloque-apoderado').style.display === 'block';
-  if (esMenor) {
-    datosApoderado = {
-      nombre: document.getElementById('pac-apoderado').value.trim(),
-      parentesco: document.getElementById('pac-parentesco-apoderado').value
+    const pacienteData = {
+        codigo: editCodigo || document.getElementById('pac-codigo').value,
+        nombres: document.getElementById('pac-nombres').value.trim(),
+        apellidos: document.getElementById('pac-apellidos').value.trim(),
+        tipo_documento: document.getElementById('pac-tipo-doc').value,
+        documento: document.getElementById('pac-doc').value.trim(),
+        fecha_nacimiento: nacimiento,
+        telefono: document.getElementById('pac-telefono').value.trim(),
+        correo: document.getElementById('pac-email').value.trim() || null,
+        direccion: document.getElementById('pac-direccion').value.trim() || null,
+        alergias: listaAlergiasFinal, 
+        apoderado: datosApoderado,       
+        contacto_emergencia_nombre: document.getElementById('pac-emerg-nombre').value.trim(),
+        contacto_emergencia_parentesco: document.getElementById('pac-emerg-parentesco').value,
+        contacto_emergencia_telefono: document.getElementById('pac-emerg-tel').value.trim()
     };
-  }
 
-  // Estructura limpia del objeto paciente mapeado según las columnas de Supabase
-  const pacienteData = {
-    codigo: editCodigo || document.getElementById('pac-codigo').value,
-    nombres: document.getElementById('pac-nombres').value.trim(),
-    apellidos: document.getElementById('pac-apellidos').value.trim(),
-    tipo_documento: document.getElementById('pac-tipo-doc').value,
-    documento: document.getElementById('pac-doc').value.trim(),
-    fecha_nacimiento: document.getElementById('pac-nacimiento').value,
-    telefono: document.getElementById('pac-telefono').value.trim(),
-    correo: document.getElementById('pac-email').value.trim() || null,
-    direccion: document.getElementById('pac-direccion').value.trim() || null,
-    alergias: alergiasSeleccionadas, // Array nativo compatible con TEXT[] de Postgres
-    apoderado: datosApoderado,       // Objeto compatible con JSONB de Postgres
-    contacto_emergencia_nombre: document.getElementById('pac-emerg-nombre').value.trim(),
-    contacto_emergencia_parentesco: document.getElementById('pac-emerg-parentesco').value,
-    contacto_emergencia_telefono: document.getElementById('pac-emerg-tel').value.trim()
-  };
+    if (editCodigo) {
+        const { error } = await supabase
+            .from('pacientes')
+            .update(pacienteData)
+            .eq('codigo', editCodigo);
 
-  if (editCodigo) {
-    // Operación UPDATE conectada a Supabase
-    const { error } = await supabase
-      .from('pacientes')
-      .update(pacienteData)
-      .eq('codigo', editCodigo);
+        if (error) {
+            showToast(`Error al actualizar: ${error.message}`, 'error');
+            return;
+        }
+        showToast('Ficha de paciente actualizada correctamente', 'success');
+    } else {
+        const { error } = await supabase
+            .from('pacientes')
+            .insert([pacienteData]);
 
-    if (error) {
-      showToast(`Error al actualizar: ${error.message}`, 'error');
-      return;
+        if (error) {
+            if (error.code === '23505') { 
+                showToast('Este número de documento ya está registrado', 'error');
+            } else {
+                showToast(`Error al registrar: ${error.message}`, 'error');
+            }
+            return;
+        }
+        showToast('Paciente registrado en el servidor clínico', 'success');
     }
-    showToast('Paciente actualizado exitosamente', 'success');
-  } else {
-    // Operación INSERT conectada a Supabase
-    const { error } = await supabase
-      .from('pacientes')
-      .insert([pacienteData]);
 
-    if (error) {
-      if (error.code === '23505') { // Código de error nativo Postgres para duplicados de clave única
-        showToast('El número de documento ya se encuentra registrado', 'error');
-      } else {
-        showToast(`Error al registrar: ${error.message}`, 'error');
-      }
-      return;
-    }
-    showToast('Paciente registrado exitosamente', 'success');
-  }
-
-  closeModal('modal-nuevo');
-  renderTable();
-  renderRecientes();
-  updateStats();
+    closeModal('modal-nuevo');
+    resetForm(); 
+    renderTable();
+    renderRecientes();
+    updateStats();
 }
 
-// ─── Reset del formulario ──────────────────────────────────
+async function renderTable() {
+    const q = (document.getElementById('search-pac').value || '').toLowerCase();
+    const filterAlergia = document.getElementById('filter-alergia').value;
 
-/**
- * Limpia todos los campos y estados del formulario de paciente.
- */
+    let { data: pacientes, error } = await supabase
+        .from('pacientes')
+        .select('*')
+        .order('fecha_creacion', { ascending: false });
+
+    if (error) {
+        showToast('Error al consultar lista de pacientes', 'error');
+        return;
+    }
+
+    const tbody = document.getElementById('tbody-pac');
+    const empty = document.getElementById('empty-pac');
+
+    if (!pacientes || !pacientes.length) {
+        tbody.innerHTML = '';
+        empty.style.display = 'block';
+        return;
+    }
+
+    let filtrados = pacientes.filter(p => {
+        const nombreCompleto = `${p.nombres} ${p.apellidos}`.toLowerCase();
+        if (q && !nombreCompleto.includes(q) && !p.documento.includes(q) && !p.codigo.toLowerCase().includes(q)) return false;
+        
+        if (filterAlergia === 'si' && (!p.alergias || p.alergias.length === 0 || p.alergias[0] === 'Ninguna')) return false;
+        if (filterAlergia === 'no' && p.alergias && p.alergias.length > 0 && p.alergias[0] !== 'Ninguna') return false;
+        
+        return true;
+    });
+
+    if (!filtrados.length) {
+        tbody.innerHTML = '';
+        empty.style.display = 'block';
+        return;
+    }
+    empty.style.display = 'none';
+
+    tbody.innerHTML = filtrados.map(p => {
+        const edad = calcAge(p.fecha_nacimiento);
+        const alNoNing = p.alergias && p.alergias.length && p.alergias[0] !== 'Ninguna';
+        const alText = alNoNing
+            ? `<span style="color:var(--red);font-size:.7rem;font-weight:600">⚠️ ${p.alergias.join(', ')}</span>`
+            : `<span style="color:var(--gray-400);font-size:.72rem">Ninguna</span>`;
+
+        return `<tr>
+            <td class="td-code">${p.codigo}</td>
+            <td>
+                <div style="display:flex;align-items:center;gap:.6rem">
+                    <div style="width:34px;height:34px;border-radius:50%;background:linear-gradient(135deg,var(--blue),var(--blue-light));color:white;display:flex;align-items:center;justify-content:center;font-size:.75rem;font-weight:700;flex-shrink:0">
+                        ${p.nombres[0]}${p.apellidos[0]}
+                    </div>
+                    <div>
+                        <div class="td-main">${p.nombres} ${p.apellidos}</div>
+                        <div style="font-size:.68rem;color:var(--gray-400)">${p.correo || '—'}</div>
+                    </div>
+                </div>
+            </td>
+            <td>${p.tipo_documento}: <strong>${p.documento}</strong></td>
+            <td>
+                ${edad} año${edad !== 1 ? 's' : ''}
+                ${edad < 18 ? '<span style="background:var(--orange-pale);color:#92400E;font-size:.62rem;padding:.1rem .4rem;border-radius:var(--radius-full);font-weight:600;margin-left:.25rem;">menor</span>' : ''}
+            </td>
+            <td>${p.telefono}</td>
+            <td>${alText}</td>
+            <td>
+                <div class="actions">
+                    <button class="btn btn-ghost btn-sm" onclick="verDetalle('${p.codigo}')" title="Ver ficha">👁️</button>
+                    <button class="btn btn-ghost btn-sm" onclick="editarPaciente('${p.codigo}')" title="Editar">✏️</button>
+                    <button class="btn btn-ghost btn-sm" style="color:var(--red);" onclick="eliminarPaciente('${p.codigo}')" title="Eliminar">🗑️</button>
+                </div>
+            </td>
+        </tr>`;
+    }).join('');
+}
+
+async function renderRecientes() {
+    let { data: pacientes, error } = await supabase
+        .from('pacientes')
+        .select('*')
+        .order('fecha_creacion', { ascending: false })
+        .limit(4);
+
+    const container = document.getElementById('lista-recientes');
+    if (error || !pacientes || !pacientes.length) {
+        container.innerHTML = '<div style="font-size:.74rem;color:var(--gray-400);padding:1rem;">No hay registros recientes.</div>';
+        return;
+    }
+
+    container.innerHTML = pacientes.map(p => `
+        <div class="patient-list-item" onclick="verDetalle('${p.codigo}')" style="cursor:pointer;">
+            <div class="pli-avatar">${p.nombres[0]}${p.apellidos[0]}</div>
+            <div style="flex-grow:1;">
+                <div class="pli-name">${p.nombres} ${p.apellidos}</div>
+                <div class="pli-meta">${p.tipo_documento}: ${p.documento} · ${p.telefono}</div>
+            </div>
+            <div class="pli-code">${p.codigo}</div>
+        </div>
+    `).join('');
+}
+
+async function updateStats() {
+    let { data: pacientes, error } = await supabase.from('pacientes').select('*');
+    if (error || !pacientes) return;
+
+    const total = pacientes.length;
+    let adultos = 0;
+    let menores = 0;
+    let conAlergias = 0;
+
+    pacientes.forEach(p => {
+        const edad = calcAge(p.fecha_nacimiento);
+        if (edad >= 18) adultos++; else menores++;
+        if (p.alergias && p.alergias.length > 0 && p.alergias[0] !== 'Ninguna') conAlergias++;
+    });
+
+    document.getElementById('st-total').textContent = total;
+    document.getElementById('st-adultos').textContent = adultos;
+    document.getElementById('st-menores').textContent = menores;
+    document.getElementById('st-alergias').textContent = conAlergias;
+}
+
+async function verDetalle(codigo) {
+    let { data: p, error } = await supabase
+        .from('pacientes')
+        .select('*')
+        .eq('codigo', codigo)
+        .single();
+
+    if (error || !p) {
+        showToast('No se pudo encontrar la ficha del paciente', 'error');
+        return;
+    }
+
+    const edad = calcAge(p.fecha_nacimiento);
+    let apoderadoHtml = '';
+    if (p.apoderado) {
+        apoderadoHtml = `
+            <div style="grid-column: span 2; background: var(--gray-50); padding: .75rem; border-radius: var(--radius); margin-top: .5rem; border: 1px solid var(--gray-200);">
+                <strong style="font-size:.65rem; color:var(--gray-500); text-transform:uppercase; display:block; margin-bottom:.25rem">Apoderado Legal (Menor de edad)</strong>
+                <div style="font-size:.82rem; color:var(--gray-900)">${p.apoderado.nombre} (${p.apoderado.parentesco})</div>
+            </div>`;
+    }
+
+    document.getElementById('det-titulo').textContent = `${p.nombres} ${p.apellidos}`;
+    document.getElementById('det-codigo').textContent = `Ficha clínica: ${p.codigo}`;
+
+    document.getElementById('det-contenido').innerHTML = `
+        <div class="detail-grid" style="display: grid; grid-template-columns: 1fr 1fr; gap: .75rem; font-size: .82rem;">
+            <div class="detail-item"><label style="display:block; font-size:.68rem; color:var(--gray-400);">Documento de Identidad</label><span>${p.tipo_documento} ${p.documento}</span></div>
+            <div class="detail-item"><label style="display:block; font-size:.68rem; color:var(--gray-400);">Edad / Nacimiento</label><span>${edad} años (${p.fecha_nacimiento})</span></div>
+            <div class="detail-item"><label style="display:block; font-size:.68rem; color:var(--gray-400);">Teléfono Celular</label><span>${p.telefono}</span></div>
+            <div class="detail-item"><label style="display:block; font-size:.68rem; color:var(--gray-400);">Correo Electrónico</label><span>${p.correo || '—'}</span></div>
+            <div class="detail-item" style="grid-column: span 2;"><label style="display:block; font-size:.68rem; color:var(--gray-400);">Dirección Residencia</label><span>${p.direccion || '—'}</span></div>
+            <div class="detail-item" style="grid-column: span 2;"><label style="display:block; font-size:.68rem; color:var(--gray-400);">Alergias Clínicas</label><span style="color: ${p.alergias[0] !== 'Ninguna' ? 'var(--red)' : 'var(--gray-900)'}; font-weight:600">${p.alergias.join(', ')}</span></div>
+            
+            <div style="grid-column: span 2; margin-top: .5rem; border-top: 1px dashed var(--gray-200); padding-top: .75rem;">
+                <strong style="font-size:.65rem; color:var(--gray-500); text-transform:uppercase; display:block; margin-bottom:.4rem">Contacto en Caso de Emergencia</strong>
+                <div style="display:grid; grid-template-columns:1fr 1fr; gap: .4rem">
+                    <div class="detail-item"><label style="display:block; font-size:.68rem; color:var(--gray-400);">Nombre Completo</label><span>${p.contacto_emergencia_nombre}</span></div>
+                    <div class="detail-item"><label style="display:block; font-size:.68rem; color:var(--gray-400);">Parentesco / Teléfono</label><span>${p.contacto_emergencia_parentesco} — ${p.contacto_emergencia_telefono}</span></div>
+                </div>
+            </div>
+            ${apoderadoHtml}
+        </div>`;
+
+    document.getElementById('det-btn-editar').onclick = () => {
+        closeModal('modal-detalle');
+        editarPaciente(p.codigo);
+    };
+
+    openModal('modal-detalle');
+}
+
+async function editarPaciente(codigo) {
+    let { data: p, error } = await supabase
+        .from('pacientes')
+        .select('*')
+        .eq('codigo', codigo)
+        .single();
+
+    if (error || !p) {
+        showToast('Error al descargar datos del paciente', 'error');
+        return;
+    }
+
+    resetForm();
+
+    document.getElementById('pac-title').textContent = 'Editar Paciente';
+    document.getElementById('pac-codigo-edit').value = p.codigo;
+    document.getElementById('pac-codigo').value = p.codigo;
+    document.getElementById('pac-nombres').value = p.nombres;
+    document.getElementById('pac-apellidos').value = p.apellidos;
+    document.getElementById('pac-tipo-doc').value = p.tipo_documento;
+    onTipoDocChange();
+    document.getElementById('pac-doc').value = p.documento;
+    document.getElementById('pac-nacimiento').value = p.fecha_nacimiento;
+    onNacimientoChange();
+    document.getElementById('pac-telefono').value = p.telefono;
+    document.getElementById('pac-email').value = p.correo || '';
+    document.getElementById('pac-direccion').value = p.direccion || '';
+
+    if (p.apoderado) {
+        document.getElementById('pac-apoderado').value = p.apoderado.nombre || '';
+        document.getElementById('pac-parentesco-apoderado').value = p.apoderado.parentesco || '';
+    }
+
+    alergiasSeleccionadas = [];
+    document.querySelectorAll('#check-alergias input[type="checkbox"]').forEach(cb => {
+        cb.checked = false;
+    });
+
+    p.alergias.forEach(a => {
+        if (a.startsWith('Otro:')) {
+            const cbOtro = document.querySelector('#check-alergias input[value="Otro"]');
+            if (cbOtro) cbOtro.checked = true;
+            alergiasSeleccionadas.push('Otro');
+            document.getElementById('bloque-otro-alergia').style.display = 'block';
+            document.getElementById('pac-alergia-otro').value = a.replace('Otro: ', '').trim();
+        } else {
+            const cb = document.querySelector(`#check-alergias input[value="${a}"]`);
+            if (cb) cb.checked = true;
+            alergiasSeleccionadas.push(a);
+        }
+    });
+
+    actualizarResumenAlergias();
+    openModal('modal-nuevo');
+}
+
+async function eliminarPaciente(codigo) {
+    const confirmacion = confirm(`¿Está seguro de eliminar permanentemente al paciente ${codigo}?`);
+    if (!confirmacion) return;
+
+    const { error } = await supabase
+        .from('pacientes')
+        .delete()
+        .eq('codigo', codigo);
+
+    if (error) {
+        if (error.code === '23503') { 
+            showToast('No se puede eliminar: el paciente tiene citas activas enlazadas.', 'error');
+        } else {
+            showToast(`Error: ${error.message}`, 'error');
+        }
+        return;
+    }
+
+    showToast('Paciente removido correctamente', 'warn');
+    renderTable();
+    renderRecientes();
+    updateStats();
+}
+
 function resetForm() {
-  document.getElementById('form-paciente').reset();
-  document.getElementById('pac-codigo-edit').value = '';
-  document.getElementById('pac-codigo').value      = '';
-  document.getElementById('pac-edad-display').textContent = '—';
-  document.getElementById('bloque-apoderado').style.display    = 'none';
-  document.getElementById('bloque-otro-alergia').style.display = 'none';
-  document.getElementById('modal-pac-title').textContent = 'Nuevo Paciente';
-
-  clearAllErrors('form-paciente');
-
-  // Limpiar checkboxes de alergias
-  alergiasSeleccionadas = [];
-  document.querySelectorAll('#check-alergias input[type="checkbox"]').forEach(cb => cb.checked = false);
-  document.getElementById('pac-alergia-otro').value = '';
-
-  const errAl = document.getElementById('alergias-err');
-  errAl.style.display = 'none';
-  errAl.textContent = '';
-
-  const resumen = document.getElementById('alergias-resumen');
-  if (resumen) resumen.style.display = 'none';
-
-  modoEditar = false;
-
-  // Pre-rellenar con el siguiente código disponible
-  document.getElementById('pac-codigo').value = nextId('PAC', DB.get('pacientes'));
-}
-
-// ─── Render tabla ──────────────────────────────────────────
-
-/**
- * Filtra y pinta la tabla principal de pacientes.
- */
-async function guardarPaciente() {
-  if (!validarForm()) { 
-    showToast('Corrija los errores del formulario', 'error'); 
-    return; 
-  }
-
-  const editCodigo = document.getElementById('pac-codigo-edit').value;
-  
-  // Capturar estructura flexible del apoderado si aplica
-  let datosApoderado = null;
-  const esMenor = document.getElementById('bloque-apoderado').style.display === 'block';
-  if (esMenor) {
-    datosApoderado = {
-      nombre: document.getElementById('pac-apoderado').value.trim(),
-      parentesco: document.getElementById('pac-parentesco-apoderado').value
-    };
-  }
-
-  // Estructura limpia del objeto paciente mapeado según las columnas de Supabase
-  const pacienteData = {
-    codigo: editCodigo || document.getElementById('pac-codigo').value,
-    nombres: document.getElementById('pac-nombres').value.trim(),
-    apellidos: document.getElementById('pac-apellidos').value.trim(),
-    tipo_documento: document.getElementById('pac-tipo-doc').value,
-    documento: document.getElementById('pac-doc').value.trim(),
-    fecha_nacimiento: document.getElementById('pac-nacimiento').value,
-    telefono: document.getElementById('pac-telefono').value.trim(),
-    correo: document.getElementById('pac-email').value.trim() || null,
-    direccion: document.getElementById('pac-direccion').value.trim() || null,
-    alergias: alergiasSeleccionadas, // Array nativo compatible con TEXT[] de Postgres
-    apoderado: datosApoderado,       // Objeto compatible con JSONB de Postgres
-    contacto_emergencia_nombre: document.getElementById('pac-emerg-nombre').value.trim(),
-    contacto_emergencia_parentesco: document.getElementById('pac-emerg-parentesco').value,
-    contacto_emergencia_telefono: document.getElementById('pac-emerg-tel').value.trim()
-  };
-
-  if (editCodigo) {
-    // Operación UPDATE conectada a Supabase
-    const { error } = await supabase
-      .from('pacientes')
-      .update(pacienteData)
-      .eq('codigo', editCodigo);
-
-    if (error) {
-      showToast(`Error al actualizar: ${error.message}`, 'error');
-      return;
-    }
-    showToast('Paciente actualizado exitosamente', 'success');
-  } else {
-    // Operación INSERT conectada a Supabase
-    const { error } = await supabase
-      .from('pacientes')
-      .insert([pacienteData]);
-
-    if (error) {
-      if (error.code === '23505') { // Código de error nativo Postgres para duplicados de clave única
-        showToast('El número de documento ya se encuentra registrado', 'error');
-      } else {
-        showToast(`Error al registrar: ${error.message}`, 'error');
-      }
-      return;
-    }
-    showToast('Paciente registrado exitosamente', 'success');
-  }
-
-  closeModal('modal-nuevo');
-  renderTable();
-  renderRecientes();
-  updateStats();
-}
-
-// ─── Render recientes ──────────────────────────────────────
-
-/**
- * Pinta los últimos 6 pacientes registrados en el sidebar.
- */
-function renderRecientes() {
-  const pacs = DB.get('pacientes').slice(-6).reverse();
-  const el   = document.getElementById('lista-recientes');
-
-  if (!pacs.length) {
-    el.innerHTML = '<div class="empty-state"><div class="empty-icon">👥</div><div class="empty-sub">Sin pacientes aún</div></div>';
-    return;
-  }
-
-  el.innerHTML = pacs.map(p => `
-    <div class="patient-list-item" onclick="verDetalle('${p.codigo}')">
-      <div class="pli-avatar">${p.nombres[0]}${p.apellidos[0]}</div>
-      <div>
-        <div class="pli-name">${p.nombres} ${p.apellidos}</div>
-        <div class="pli-meta">${p.tipoDoc}: ${p.documento}</div>
-      </div>
-      <div class="pli-code">${p.codigo}</div>
-    </div>`).join('');
-}
-
-// ─── Estadísticas ──────────────────────────────────────────
-
-/**
- * Actualiza los contadores del bloque de stats.
- */
-function updateStats() {
-  const pacs = DB.get('pacientes');
-  document.getElementById('st-total').textContent    = pacs.length;
-  document.getElementById('st-adultos').textContent  = pacs.filter(p => p.edad >= 18).length;
-  document.getElementById('st-menores').textContent  = pacs.filter(p => p.edad < 18).length;
-  document.getElementById('st-alergias').textContent = pacs.filter(p =>
-    p.alergias && p.alergias.length && p.alergias[0] !== 'Ninguna'
-  ).length;
-}
-
-// ─── Modal detalle ─────────────────────────────────────────
-
-/**
- * Abre el modal de ficha completa del paciente.
- * @param {string} codigo
- */
-function verDetalle(codigo) {
-  const p = DB.get('pacientes').find(x => x.codigo === codigo);
-  if (!p) return;
-
-  document.getElementById('det-titulo').textContent = `${p.nombres} ${p.apellidos}`;
-  document.getElementById('det-codigo').textContent = `${p.codigo} — ${p.tipoDoc}: ${p.documento}`;
-
-  const alNoNing = p.alergias && p.alergias.length && p.alergias[0] !== 'Ninguna';
-  const alAlert  = alNoNing
-    ? `<div class="allergy-alert" style="margin-bottom:1rem">⚠️ Alergias: ${p.alergias.join(', ')}</div>`
-    : '';
-
-  document.getElementById('det-contenido').innerHTML = `
-    ${alAlert}
-    <div class="patient-info-strip" style="margin-bottom:1.25rem">
-      <div class="pi-avatar">${p.nombres[0]}${p.apellidos[0]}</div>
-      <div class="pi-data">
-        <div class="pi-name">${p.nombres} ${p.apellidos}</div>
-        <div class="pi-meta">${p.edad} años • ${p.telefono} • ${p.email || 'Sin correo'}</div>
-      </div>
-    </div>
-    <div class="detail-grid">
-      <div class="detail-item"><label>Código</label><span>${p.codigo}</span></div>
-      <div class="detail-item"><label>Documento</label><span>${p.tipoDoc}: ${p.documento}</span></div>
-      <div class="detail-item"><label>Fecha de Nacimiento</label><span>${formatDate(p.nacimiento)}</span></div>
-      <div class="detail-item"><label>Edad</label><span>${p.edad} años</span></div>
-      <div class="detail-item"><label>Teléfono</label><span>${p.telefono}</span></div>
-      <div class="detail-item"><label>Correo</label><span>${p.email || '—'}</span></div>
-      <div class="detail-item" style="grid-column:1/-1"><label>Dirección</label><span>${p.direccion || '—'}</span></div>
-      <div class="detail-item" style="grid-column:1/-1"><label>Alergias</label><span>${p.alergias?.join(', ') || 'Ninguna'}</span></div>
-    </div>
-    ${p.apoderado ? `
-    <div style="margin-top:1rem;padding-top:1rem;border-top:1px solid var(--gray-200)">
-      <div class="section-label" style="margin-bottom:.5rem">Apoderado</div>
-      <div class="detail-grid">
-        <div class="detail-item"><label>Nombre</label><span>${p.apoderado.nombre}</span></div>
-        <div class="detail-item"><label>Parentesco</label><span>${p.apoderado.parentesco}</span></div>
-      </div>
-    </div>` : ''}
-    <div style="margin-top:1rem;padding-top:1rem;border-top:1px solid var(--gray-200)">
-      <div class="section-label" style="margin-bottom:.5rem">Contacto de Emergencia</div>
-      <div class="detail-grid">
-        <div class="detail-item"><label>Nombre</label><span>${p.emergencia.nombre}</span></div>
-        <div class="detail-item"><label>Parentesco</label><span>${p.emergencia.parentesco}</span></div>
-        <div class="detail-item"><label>Teléfono</label><span>${p.emergencia.telefono}</span></div>
-      </div>
-    </div>`;
-
-  document.getElementById('det-btn-editar').onclick = () => {
-    closeModal('modal-detalle');
-    editarPaciente(codigo);
-  };
-
-  openModal('modal-detalle');
-}
-
-// ─── Editar paciente ───────────────────────────────────────
-
-/**
- * Carga los datos del paciente en el formulario para edición.
- * @param {string} codigo
- */
-function editarPaciente(codigo) {
-  const p = DB.get('pacientes').find(x => x.codigo === codigo);
-  if (!p) return;
-
-  resetForm();
-  modoEditar = true;
-  document.getElementById('modal-pac-title').textContent       = 'Editar Paciente';
-  document.getElementById('pac-codigo-edit').value             = p.codigo;
-  document.getElementById('pac-codigo').value                  = p.codigo;
-  document.getElementById('pac-nombres').value                 = p.nombres;
-  document.getElementById('pac-apellidos').value               = p.apellidos;
-  document.getElementById('pac-tipo-doc').value                = p.tipoDoc;
-  document.getElementById('pac-doc').value                     = p.documento;
-  document.getElementById('pac-nacimiento').value              = p.nacimiento;
-  document.getElementById('pac-telefono').value                = p.telefono;
-  document.getElementById('pac-email').value                   = p.email || '';
-  document.getElementById('pac-direccion').value               = p.direccion || '';
-  document.getElementById('pac-emerg-nombre').value            = p.emergencia?.nombre || '';
-  document.getElementById('pac-emerg-parentesco').value        = p.emergencia?.parentesco || '';
-  document.getElementById('pac-emerg-tel').value               = p.emergencia?.telefono || '';
-
-  onNacimientoChange();
-
-  if (p.apoderado) {
-    document.getElementById('pac-apoderado').value            = p.apoderado.nombre || '';
-    document.getElementById('pac-parentesco-apoderado').value = p.apoderado.parentesco || '';
-  }
-
-  // Restaurar checkboxes de alergias
-  alergiasSeleccionadas = [...(p.alergias || [])];
-  document.querySelectorAll('#check-alergias input[type="checkbox"]').forEach(cb => {
-    const activo = alergiasSeleccionadas.some(a =>
-      a === cb.value || (cb.value === 'Otro' && a.startsWith('Otro:'))
-    );
-    cb.checked = activo;
-  });
-
-  // Restaurar campo "Otro" si aplica
-  const otroGuardado = alergiasSeleccionadas.find(a => a.startsWith('Otro:'));
-  if (otroGuardado) {
-    document.getElementById('bloque-otro-alergia').style.display = 'block';
-    document.getElementById('pac-alergia-otro').value = otroGuardado.replace(/^Otro:\s?/, '').trim();
-  } else {
+    document.getElementById('form-paciente').reset();
+    document.getElementById('pac-codigo-edit').value = '';
+    document.getElementById('pac-edad-display').textContent = '—';
+    document.getElementById('bloque-apoderado').style.display = 'none';
     document.getElementById('bloque-otro-alergia').style.display = 'none';
-  }
-
-  actualizarResumenAlergias();
-  openModal('modal-nuevo');
-}
-
-// ─── Eliminar paciente ─────────────────────────────────────
-
-/**
- * Solicita confirmación y elimina el paciente de la BD local.
- * @param {string} codigo
- */
-function eliminarPaciente(codigo) {
-  if (!confirm('¿Eliminar este paciente del sistema? Esta acción no se puede deshacer.')) return;
-  DB.set('pacientes', DB.get('pacientes').filter(p => p.codigo !== codigo));
-  showToast('Paciente eliminado', 'warn');
-  renderTable();
-  renderRecientes();
-  updateStats();
+    document.getElementById('alergias-resumen').style.display = 'none';
+    document.getElementById('doc-hint').textContent = 'Seleccione el tipo de documento primero';
+    alergiasSeleccionadas = [];
+    clearAllErrors('form-paciente');
 }
