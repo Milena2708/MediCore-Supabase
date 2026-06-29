@@ -3,19 +3,29 @@
 
 /* Cita atendida item (para seleccionar) */
 .cita-atendida-item {
-  display:flex; align-items:center; gap:.75rem; padding:.85rem 1rem;
-  border-radius:var(--radius); cursor:pointer; transition:all var(--tr);
-  border-bottom:1px solid var(--gray-100); position:relative;
+  display: flex;
+  align-items: center;
+  gap: .75rem;
+  padding: .85rem 1rem;
+  border-radius: var(--radius-lg); /* Bordes redondeados más modernos */
+  cursor: pointer;
+  transition: all var(--tr);
+  background: white;
+  border: 1.5px solid var(--gray-200); /* Borde completo en lugar de solo abajo */
+  margin-bottom: .65rem; /* ¡ESTA ES LA CLAVE! Separa los boxes entre sí */
+  position: relative;
+  box-shadow: var(--shadow-sm);
 }
-.cita-atendida-item:hover { background:var(--blue-pale); }
-.cita-atendida-item.selected { background:var(--blue-pale); border-left:3px solid var(--blue); margin-left:-3px; }
-.cai-icon { width:38px;height:38px;border-radius:var(--radius);background:var(--blue-pale);color:var(--blue);display:flex;align-items:center;justify-content:center;font-size:1rem;flex-shrink:0; }
-.cai-main { flex:1;min-width:0; }
-.cai-nombre { font-size:.83rem;font-weight:600;color:var(--gray-900); white-space:nowrap;overflow:hidden;text-overflow:ellipsis; }
-.cai-meta   { font-size:.68rem;color:var(--gray-400); }
-.cai-badge  { flex-shrink:0; }
-.has-hist { background:var(--green-pale) !important; }
+.cita-atendida-item:hover {
+  background: var(--blue-pale);
+  border-color: var(--blue-pale2);
+}
 
+.cita-atendida-item.selected {
+  background: var(--blue-pale);
+  border-color: var(--blue);
+  box-shadow: var(--shadow);
+}
 /* Historial list */
 .hist-card {
   background:white; border:1.5px solid var(--gray-200); border-radius:var(--radius-lg);
