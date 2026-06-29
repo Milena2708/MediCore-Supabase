@@ -205,3 +205,51 @@ document.addEventListener('DOMContentLoaded', () => {
   startClock();
   setActiveNav();
 });
+// Control de Roles y Protección de Rutas
+document.addEventListener('DOMContentLoaded', () => {
+  const currentPath = window.location.pathname.split('/').pop() || 'index.html';
+  const userRol = sessionStorage.getItem('medicore_user_rol');
+
+  // Si no está logueado y no está en login.html, forzar redirección
+  if (!userRol && currentPath !== 'login.html') {
+    window.location.href = 'login.html';
+    return;
+  }
+
+  // Lógica clara de visualización de pestañas por rol
+  if (userRol) {
+    const navContainer = document.querySelector('.app-nav');
+    if (navContainer) {
+      // Si es Paciente, ocultar de forma segura pestañas de gestión interna
+      if (userRol === 'Paciente') {
+        const items = navContainer.querySelectorAll('a');
+        items.forEach(item => {
+          const href = item.getAttribute('href');
+          if (href === 'pacientes.html' || href === 'historial.html' || href === 'reportes.html') {
+            item.style.display = 'none';
+          }
+        });
+      }
+      // Ocultar Reportes si no es Administrador
+      if (userRol !== 'Administrador') {
+        const reportTab = navContainer.querySelector('a[href="reportes.html"]');
+        if (reportTab) reportTab.style.display = 'none';
+      }
+    }
+
+    // Proteger contra accesos forzados por URL directa
+    if (userRol === 'Paciente' && ['pacientes.html', 'historial.html', 'reportes.html'].includes(currentPath)) {
+      window.location.href = 'index.html';
+    }
+    if (userRol !== 'Administrador' && currentPath === 'reportes.html') {
+      window.location.href = 'index.html';
+    }
+  }
+});
+
+// Utilidad global de cierre de sesión exigida por el PDF
+async function cerrarSesionSistema() {
+  await supabase.auth.signOut();
+  sessionStorage.clear();
+  window.location.href = 'login.html';
+}
