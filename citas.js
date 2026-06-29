@@ -1,6 +1,7 @@
 // ══════════════════════════════════════════
 //  citas.js — Lógica de Programación Médica
 //  Conectado a Supabase Database (supabaseClient)
+//  Segregación de Roles: Paciente vs Personal Clínico
 // ══════════════════════════════════════════
 
 const MEDICOS = {
@@ -20,7 +21,9 @@ const HORAS = Array.from({ length: 20 }, (_, i) => {
 }).filter(h => { const [hh] = h.split(':'); return parseInt(hh) < 18; });
 
 document.addEventListener('DOMContentLoaded', () => {
-  document.getElementById('cita-fecha').min = todayStr();
+  if (document.getElementById('cita-fecha')) {
+    document.getElementById('cita-fecha').min = todayStr();
+  }
   const sel = document.getElementById('cita-hora');
   if (sel && sel.options.length <= 1) {
     HORAS.forEach(h => {
@@ -40,32 +43,53 @@ async function abrirNuevaCita() {
   openModal('modal-cita');
 }
 
-// Carga dinámica de pacientes directo desde la nube
+// Carga dinámica de pacientes directo desde la nube o autofiltro por sesión
 async function cargarPacientesSelect(selected = '') {
   const sel = document.getElementById('cita-paciente');
+  if (!sel) return;
   sel.innerHTML = '<option value="">Seleccionar paciente…</option>';
   
   const { data: pacientes, error } = await supabaseClient
     .from('pacientes')
-    .select('codigo, nombres, apellidos, documento');
+    .select('codigo, nombres, apellidos, documento, correo');
 
   if (error || !pacientes) {
     showToast('Error al cargar la lista de pacientes', 'error');
     return;
   }
 
-  pacientes.forEach(p => {
-    const o = document.createElement('option');
-    o.value = p.codigo;
-    o.textContent = `${p.nombres} ${p.apellidos} — ${p.documento}`;
-    if (p.codigo === selected) o.selected = true;
-    sel.appendChild(o);
-  });
+  const userRol = sessionStorage.getItem('medicore_user_rol');
+  
+  if (userRol === 'Paciente') {
+    // Si es Paciente, auto-seleccionar obligatoriamente su propia ficha clínica
+    const { data: { user } } = await supabaseClient.auth.getUser();
+    const miFicha = pacientes.find(p => p.correo === user?.email);
+    
+    if (miFicha) {
+      sel.innerHTML = `<option value="${miFicha.codigo}">${miFicha.nombres} ${miFicha.apellidos} — ${miFicha.documento}</option>`;
+      sel.value = miFicha.codigo;
+      sel.disabled = true; // Bloqueado para que no elija a otra persona
+      await onPacienteChange();
+    } else {
+      sel.innerHTML = '<option value="">Su cuenta no está enlazada a una ficha de paciente</option>';
+    }
+  } else {
+    // Si es personal administrativo, listar todos de manera abierta
+    sel.disabled = false;
+    pacientes.forEach(p => {
+      const o = document.createElement('option');
+      o.value = p.codigo;
+      o.textContent = `${p.nombres} ${p.apellidos} — ${p.documento}`;
+      if (p.codigo === selected) o.selected = true;
+      sel.appendChild(o);
+    });
+  }
 }
 
 function onEspecialidadChange() {
   const esp = document.getElementById('cita-especialidad').value;
   const sel  = document.getElementById('cita-medico');
+  if (!sel) return;
   sel.innerHTML = '';
   if (!esp) { sel.innerHTML = '<option value="">Seleccione especialidad primero</option>'; return; }
   sel.innerHTML = '<option value="">Seleccionar médico…</option>';
@@ -82,7 +106,7 @@ async function onPacienteChange() {
   const codigo = document.getElementById('cita-paciente').value;
   const strip  = document.getElementById('pac-info-strip');
   const bloque = document.getElementById('bloque-pac-info');
-  if (!codigo) { bloque.style.display = 'none'; return; }
+  if (!codigo || !bloque || !strip) { if(bloque) bloque.style.display = 'none'; return; }
   
   const { data: p, error } = await supabaseClient
     .from('pacientes')
@@ -109,14 +133,18 @@ async function onPacienteChange() {
 
 function onPrioridadChange() {
   const val = document.getElementById('cita-prioridad').value;
-  document.getElementById('bloque-justificacion').style.display = val === 'Urgente' ? 'block' : 'none';
+  const bloque = document.getElementById('bloque-justificacion');
+  if (bloque) bloque.style.display = val === 'Urgente' ? 'block' : 'none';
 }
 
 async function resetFormCita() {
-  document.getElementById('form-cita').reset();
-  document.getElementById('cita-codigo-edit').value = '';
+  const form = document.getElementById('form-cita');
+  if (form) form.reset();
   
-  // Autogeneración secuencial del ID de CITA consultando la realidad de la BD
+  const editEdit = document.getElementById('cita-codigo-edit');
+  if (editEdit) editEdit.value = '';
+  
+  // Autogeneración secuencial consultando la BD
   const { data: citas } = await supabaseClient.from('citas').select('codigo');
   let siguienteCodigo = 'CITA001';
   if (citas && citas.length > 0) {
@@ -125,10 +153,12 @@ async function resetFormCita() {
     siguienteCodigo = 'CITA' + String(maxNum).padStart(3, '0');
   }
 
-  document.getElementById('cita-codigo').value = siguienteCodigo;
-  document.getElementById('bloque-pac-info').style.display = 'none';
-  document.getElementById('bloque-justificacion').style.display = 'none';
-  document.getElementById('cita-medico').innerHTML = '<option value="">Seleccione especialidad primero</option>';
+  const codInp = document.getElementById('cita-codigo');
+  if (codInp) codInp.value = siguienteCodigo;
+  
+  if (document.getElementById('bloque-pac-info')) document.getElementById('bloque-pac-info').style.display = 'none';
+  if (document.getElementById('bloque-justificacion')) document.getElementById('bloque-justificacion').style.display = 'none';
+  if (document.getElementById('cita-medico')) document.getElementById('cita-medico').innerHTML = '<option value="">Seleccione especialidad primero</option>';
   clearAllErrors('form-cita');
 }
 
@@ -157,7 +187,7 @@ async function validarFormCita() {
   else if (motivo.length > 200)      { showFieldError('cita-motivo', 'Máximo 200 caracteres'); ok = false; }
 
   if (ok) {
-    // Validación asíncrona de solapamiento de agenda médica
+    // Validación de solapamiento de agenda médica
     const { data: conflMed } = await supabaseClient
       .from('citas')
       .select('codigo')
@@ -241,7 +271,21 @@ async function renderCitas() {
 
   if (errCitas || !citas) return;
 
+  // IDENTIFICACIÓN DE ROL: Aislar información si el usuario activo es un Paciente
+  const userRol = sessionStorage.getItem('medicore_user_rol');
+  let miCodigoPaciente = null;
+  if (userRol === 'Paciente') {
+    const { data: { user } } = await supabaseClient.auth.getUser();
+    if (user && pacientes) {
+      const miFicha = pacientes.find(p => p.correo === user.email);
+      if (miFicha) miCodigoPaciente = miFicha.codigo;
+    }
+  }
+
   let filtradas = citas.filter(c => {
+    // REGLA DE PRIVACIDAD: El paciente únicamente visualiza sus propias reservas médicas
+    if (userRol === 'Paciente' && c.paciente_id !== miCodigoPaciente) return false;
+
     const pac = pacientes ? pacientes.find(p => p.codigo === c.paciente_id) : null;
     const nombre = pac ? `${pac.nombres} ${pac.apellidos}`.toLowerCase() : '';
     if (q && !nombre.includes(q) && !c.medico.toLowerCase().includes(q) && !c.codigo.toLowerCase().includes(q)) return false;
@@ -257,8 +301,9 @@ async function renderCitas() {
 
   const grid  = document.getElementById('cita-card-grid');
   const empty = document.getElementById('empty-citas');
+  if (!grid) return;
   if (!filtradas.length) { grid.innerHTML = ''; empty.style.display = 'block'; return; }
-  empty.style.display = 'none';
+  if (empty) empty.style.display = 'none';
 
   grid.innerHTML = filtradas.map(c => {
     const pac      = pacientes ? pacientes.find(p => p.codigo === c.paciente_id) : null;
@@ -266,11 +311,19 @@ async function renderCitas() {
     const alNoNing = pac?.alergias?.length && pac.alergias[0] !== 'Ninguna';
     const priClass = c.prioridad === 'Urgente' ? 'urgente' : c.prioridad === 'Preferencial' ? 'preferencial' : '';
 
+    // PROTECCIÓN DE OPERACIONES: El paciente no puede auto-atenderse ni enviarse a salas de espera
     let acciones = '';
-    if (c.estado === 'Programada') acciones = `<button class="btn btn-success btn-sm" onclick="cambiarEstado('${c.codigo}','Confirmada')">✔ Confirmar</button><button class="btn btn-danger btn-sm" onclick="pedirCancelacion('${c.codigo}')">✕ Cancelar</button>`;
-    if (c.estado === 'Confirmada') acciones = `<button class="btn btn-info btn-sm" onclick="cambiarEstado('${c.codigo}','En espera')">🏥 A sala espera</button><button class="btn btn-danger btn-sm" onclick="pedirCancelacion('${c.codigo}')">✕ Cancelar</button>`;
-    if (c.estado === 'En espera')  acciones = `<a href="sala-espera.html" class="btn btn-outline btn-sm">Ver Sala →</a>`;
-    if (c.estado === 'Programada' || c.estado === 'Confirmada') acciones += `<button class="btn btn-ghost btn-sm" onclick="editarCita('${c.codigo}')">✏️</button>`;
+    if (userRol !== 'Paciente') {
+      if (c.estado === 'Programada') acciones = `<button class="btn btn-success btn-sm" onclick="cambiarEstado('${c.codigo}','Confirmada')">✔ Confirmar</button><button class="btn btn-danger btn-sm" onclick="pedirCancelacion('${c.codigo}')">✕ Cancelar</button>`;
+      if (c.estado === 'Confirmada') acciones = `<button class="btn btn-info btn-sm" onclick="cambiarEstado('${c.codigo}','En espera')">🏥 A sala espera</button><button class="btn btn-danger btn-sm" onclick="pedirCancelacion('${c.codigo}')">✕ Cancelar</button>`;
+      if (c.estado === 'En espera')  acciones = `<a href="sala-espera.html" class="btn btn-outline btn-sm">Ver Sala →</a>`;
+      if (c.estado === 'Programada' || c.estado === 'Confirmada') acciones += `<button class="btn btn-ghost btn-sm" onclick="editarCita('${c.codigo}')">✏️</button>`;
+    } else {
+      // El paciente solo mantiene control manual de cancelación si la cita aún está 'Programada'
+      if (c.estado === 'Programada') {
+        acciones = `<button class="btn btn-danger btn-sm" onclick="pedirCancelacion('${c.codigo}')">✕ Cancelar Cita</button>`;
+      }
+    }
 
     return `<div class="cita-card ${priClass}">
       <div class="cita-main">
@@ -300,22 +353,17 @@ async function cambiarEstado(codigo, nuevoEstado) {
   if (!c) return;
   if (nuevoEstado === 'En espera' && c.estado === 'Cancelada') { showToast('No se puede enviar a espera una cita cancelada', 'error'); return; }
   
-  // 1. Actualizar el estado en la tabla maestra de citas
-  const updateData = { estado: nuevoEstado };
-  await supabaseClient.from('citas').update(updateData).eq('codigo', codigo);
+  await supabaseClient.from('citas').update({ estado: nuevoEstado }).eq('codigo', codigo);
 
-  // 2. ¡CONEXIÓN CLAVE CON LA OPCIÓN B!: Si se envía a sala de espera, insertar el registro operativo
   if (nuevoEstado === 'En espera') {
     const horaLlegada = new Date().toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit' });
-    
-    // Mapeo numérico interno de prioridades para tu columna 'orden_prioridad'
     const prioNum = c.prioridad === 'Urgente' ? 0 : c.prioridad === 'Preferencial' ? 1 : 2;
 
     const { error: errSala } = await supabaseClient
       .from('sala_espera')
       .insert([{
-        cita_id: codigo,          // Apunta al código correlativo de la cita (Ej: CITA001)
-        hora_llegada: horaLlegada, // Hora real de presencia en clínica
+        cita_id: codigo,
+        hora_llegada: horaLlegada,
         estado: 'En espera',
         orden_prioridad: prioNum
       }]);
@@ -388,11 +436,34 @@ function limpiarFiltros() {
 
 async function updateStats() {
   const { data: citas } = await supabaseClient.from('citas').select('*');
+  const { data: pacientes } = await supabaseClient.from('pacientes').select('codigo, correo');
   if (!citas) return;
   const today = todayStr();
+
+  const userRol = sessionStorage.getItem('medicore_user_rol');
+  let miCodigoPaciente = null;
+
+  if (userRol === 'Paciente') {
+    const { data: { user } } = await supabaseClient.auth.getUser();
+    if (user && pacientes) {
+      const miFicha = pacientes.find(p => p.correo === user.email);
+      if (miFicha) miCodigoPaciente = miFicha.codigo;
+    }
+  }
+
+  // Filtrar el contador global de estadísticas superiores si el perfil activo es de un Paciente
+  const dataParaContar = userRol === 'Paciente' ? citas.filter(c => c.paciente_id === miCodigoPaciente) : citas;
   
-  document.getElementById('st-total').textContent    = citas.length;
-  document.getElementById('st-hoy').textContent      = citas.filter(c => c.fecha === today && !['Cancelada', 'No asistió'].includes(c.estado)).length;
-  document.getElementById('st-espera').textContent   = citas.filter(c => c.estado === 'En espera').length;
-  document.getElementById('st-urgentes').textContent = citas.filter(c => c.prioridad === 'Urgente' && !['Cancelada', 'No asistió', 'Atendida'].includes(c.estado)).length;
+  if (document.getElementById('st-total')) {
+    document.getElementById('st-total').textContent = dataParaContar.length;
+  }
+  if (document.getElementById('st-hoy')) {
+    document.getElementById('st-hoy').textContent = dataParaContar.filter(c => c.fecha === today && !['Cancelada', 'No asistió'].includes(c.estado)).length;
+  }
+  if (document.getElementById('st-espera')) {
+    document.getElementById('st-espera').textContent = dataParaContar.filter(c => c.estado === 'En espera').length;
+  }
+  if (document.getElementById('st-urgentes')) {
+    document.getElementById('st-urgentes').textContent = dataParaContar.filter(c => c.prioridad === 'Urgente' && !['Cancelada', 'No asistió', 'Atendida'].includes(c.estado)).length;
+  }
 }

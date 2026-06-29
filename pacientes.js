@@ -23,7 +23,7 @@ document.addEventListener('DOMContentLoaded', () => {
 // FUNCIÓN CORREGIDA: Esta es la función exacta que invoca tu botón HTML
 async function abrirNuevoPacienteModal() {
     // 1. Limpiamos el formulario primero
-    resetForm(); 
+    await resetForm(); 
     
     // 2. Consultamos la base de datos de Supabase de forma asíncrona para calcular el siguiente ID
     const { data: pacientes, error } = await supabaseClient
@@ -62,7 +62,7 @@ function onAlergiaChange(checkbox) {
         if (valor === 'Otro') {
             document.getElementById('bloque-otro-alergia').style.display = 'block';
         }
-        alergiasSeleccionadas = alergiasSeleccionadas.filter(a => a !== 'Ninguna');
+        alergiasSeleccionadas = status = alergiasSeleccionadas.filter(a => a !== 'Ninguna');
         if (!alergiasSeleccionadas.includes(valor)) {
             alergiasSeleccionadas.push(valor);
         }
@@ -227,6 +227,9 @@ async function guardarPaciente() {
         listaAlergiasFinal.push(`Otro: ${especificarOtro}`);
     }
 
+    // Habilitar campo correo temporalmente antes de capturar el envío a Supabase
+    document.getElementById('pac-email').disabled = false;
+
     const pacienteData = {
         codigo: editCodigo || document.getElementById('pac-codigo').value,
         nombres: document.getElementById('pac-nombres').value.trim(),
@@ -243,6 +246,9 @@ async function guardarPaciente() {
         contacto_emergencia_parentesco: document.getElementById('pac-emerg-parentesco').value,
         contacto_emergencia_telefono: document.getElementById('pac-emerg-tel').value.trim()
     };
+
+    // Volver a bloquear visualmente el input
+    document.getElementById('pac-email').disabled = true;
 
     if (editCodigo) {
         const { error } = await supabaseClient
@@ -272,7 +278,7 @@ async function guardarPaciente() {
     }
 
     closeModal('modal-nuevo');
-    resetForm(); 
+    await resetForm(); 
     renderTable();
     renderRecientes();
     updateStats();
@@ -447,7 +453,7 @@ async function verDetalle(codigo) {
         </div>`;
 
     document.getElementById('det-btn-editar').onclick = () => {
-        closeModal('modal-detalle');
+        closeModal('modal-detail');
         editarPaciente(p.codigo);
     };
 
@@ -466,7 +472,7 @@ async function editarPaciente(codigo) {
         return;
     }
 
-    resetForm();
+    await resetForm();
 
     document.getElementById('pac-title').textContent = 'Editar Paciente';
     document.getElementById('pac-codigo-edit').value = p.codigo;
@@ -534,7 +540,7 @@ async function eliminarPaciente(codigo) {
     updateStats();
 }
 
-function resetForm() {
+async function resetForm() {
     document.getElementById('form-paciente').reset();
     document.getElementById('pac-codigo-edit').value = '';
     document.getElementById('pac-edad-display').textContent = '—';
@@ -544,4 +550,18 @@ function resetForm() {
     document.getElementById('doc-hint').textContent = 'Seleccione el tipo de documento primero';
     alergiasSeleccionadas = [];
     clearAllErrors('form-paciente');
+
+    // ADICIÓN DE SEGURIDAD EXCLUSIVA: Sincronizar el correo en sesión de forma automática
+    const userRol = sessionStorage.getItem('medicore_user_rol');
+    if (userRol === 'Paciente') {
+        const { data: { user } } = await supabaseClient.auth.getUser();
+        const emailInput = document.getElementById('pac-email');
+        if (user && emailInput) {
+            emailInput.value = user.email;
+            emailInput.disabled = true; 
+        }
+    } else {
+        const emailInput = document.getElementById('pac-email');
+        if (emailInput) emailInput.disabled = false;
+    }
 }
