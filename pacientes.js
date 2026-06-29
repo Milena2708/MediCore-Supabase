@@ -20,10 +20,12 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 });
 
+// FUNCIÓN CORREGIDA: Esta es la función exacta que invoca tu botón HTML
 async function abrirNuevoPacienteModal() {
-    resetForm();
+    // 1. Limpiamos el formulario primero
+    resetForm(); 
     
-    // Generación dinámica y secuencial del PAC en base a la realidad de la BD
+    // 2. Consultamos la base de datos de Supabase de forma asíncrona para calcular el siguiente ID
     const { data: pacientes, error } = await supabase
         .from('pacientes')
         .select('codigo');
@@ -35,9 +37,12 @@ async function abrirNuevoPacienteModal() {
         siguienteCodigo = 'PAC' + String(maxNum).padStart(3, '0');
     }
 
+    // 3. Inyectamos los textos e IDs correspondientes en tu UI nativa
     document.getElementById('pac-codigo').value = siguienteCodigo;
     document.getElementById('pac-title').textContent = 'Nuevo Paciente';
     document.getElementById('pac-codigo-edit').value = '';
+    
+    // 4. Abrimos tu modal estético
     openModal('modal-nuevo');
 }
 
