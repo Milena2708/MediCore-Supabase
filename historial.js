@@ -79,10 +79,12 @@ async function seleccionarCitaHistorial(citaCodigo, pacienteId) {
 
   // Remover selecciones previas visuales
   document.querySelectorAll('.cita-atendida-item').forEach(el => el.classList.remove('selected'));
-  event.currentTarget?.classList.add('selected');
+  if (event && event.currentTarget) {
+    event.currentTarget.classList.add('selected');
+  }
 
-  const { data: historial } = await supabaseClient.from('historial_consultas').select('*').eq('cita_id', citaCodigo).single();
-  const { data: pac } = await supabaseClient.from('pacientes').select('*').eq('codigo', pacienteId).single();
+  const { data: historial } = await supabaseClient.from('historial_consultas').select('*').eq('cita_id', citaCodigo).maybeSingle();
+  const { data: pac } = await supabaseClient.from('pacientes').select('*').eq('codigo', pacienteId).maybeSingle();
 
   if (!historial) {
     mainPanel.innerHTML = `
@@ -268,11 +270,11 @@ async function guardarHistorial() {
     paciente_id: c.paciente_id,
     medico,
     especialidad: esp,
-    fecha_atencion: new Date().toISOString().split('T')[0],
+    fecha_atencion: new Date().toISOString().split('T')[0], // CORRECCIÓN 406: Apunta solo a fecha_atencion existente en tu tabla
     sintomas,
     diagnostico,
     tratamiento,
-    medicamentos: medsData, // Se inyecta como JSONB nativo
+    medicamentos: medsData, 
     observaciones: observaciones || null,
     proxima_cita: proximaCita
   };
@@ -324,4 +326,12 @@ function setupContadorCaracteres(inputId, countId, max) {
   
   counter.textContent = `${input.value.length} / ${max}`;
   input.oninput = () => { counter.textContent = `${input.value.length} / ${max}`; };
+}
+
+// UTILERÍA LOCAL PARCHE PARA ELIMINAR EL REFERENCEERROR DE FORMA DEFINITIVA
+function formatDate(dateStr) {
+  if (!dateStr) return '—';
+  if (dateStr.includes('/')) return dateStr;
+  const d = new Date(dateStr + 'T00:00:00');
+  return d.toLocaleDateString('es-PE', { day:'2-digit', month:'2-digit', year:'numeric' });
 }

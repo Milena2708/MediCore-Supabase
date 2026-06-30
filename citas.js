@@ -24,17 +24,26 @@ document.addEventListener('DOMContentLoaded', () => {
   if (document.getElementById('cita-fecha')) {
     document.getElementById('cita-fecha').min = todayStr();
   }
-  const sel = document.getElementById('cita-hora');
-  if (sel && sel.options.length <= 1) {
-    HORAS.forEach(h => {
-      const o = document.createElement('option');
-      o.value = o.textContent = h;
-      sel.appendChild(o);
-    });
-  }
+  
+  // CORRECCIÓN: Forzar el llenado del selector de horas de forma segura al iniciar el módulo
+  inyectarHorasSelector();
+  
   renderCitas();
   updateStats();
 });
+
+function inyectarHorasSelector() {
+  const sel = document.getElementById('cita-hora');
+  if (!sel) return;
+  
+  // Limpiar opciones previas manteniendo la primera por defecto
+  sel.innerHTML = '<option value="">Seleccionar hora…</option>';
+  HORAS.forEach(h => {
+    const o = document.createElement('option');
+    o.value = o.textContent = h;
+    sel.appendChild(o);
+  });
+}
 
 async function abrirNuevaCita() {
   await resetFormCita();
@@ -74,7 +83,7 @@ async function cargarPacientesSelect(selected = '') {
       sel.innerHTML = '<option value="">Su cuenta no está enlazada a una ficha de paciente</option>';
     }
   } else {
-    // Si es personal administrativo, listar todos de manera abierta
+    // Si es personal administrativo (Recepción o Admin), listar todos de manera abierta
     sel.disabled = false;
     pacientes.forEach(p => {
       const o = document.createElement('option');
@@ -159,6 +168,9 @@ async function resetFormCita() {
   if (document.getElementById('bloque-pac-info')) document.getElementById('bloque-pac-info').style.display = 'none';
   if (document.getElementById('bloque-justificacion')) document.getElementById('bloque-justificacion').style.display = 'none';
   if (document.getElementById('cita-medico')) document.getElementById('cita-medico').innerHTML = '<option value="">Seleccione especialidad primero</option>';
+  
+  // Asegurar la reinyección de horas limpias en el formulario
+  inyectarHorasSelector();
   clearAllErrors('form-cita');
 }
 
@@ -187,45 +199,72 @@ async function validarFormCita() {
   else if (motivo.length > 200)      { showFieldError('cita-motivo', 'Máximo 200 caracteres'); ok = false; }
 
   if (ok) {
-    // Validación de solapamiento de agenda médica
-    const { data: conflMed } = await supabaseClient
-      .from('citas')
-      .select('codigo')
-      .eq('medico', medico)
-      .eq('fecha', fecha)
-      .eq('hora', hora)
-      .not('estado', 'in', '("Cancelada","No asistió")')
-      .neq('codigo', editCodigo);
+    try {
+      // 1. Validación de solapamiento de agenda médica con manejo de errores
+      const { data: conflMed, error: errMed } = await supabaseClient
+        .from('citas')
+        .select('codigo')
+        .eq('medico', medico)
+        .eq('fecha', fecha)
+        .eq('hora', hora)
+        .not('estado', 'in', '("Cancelada","No asistió")')
+        .neq('codigo', editCodigo);
 
-    if (conflMed && conflMed.length > 0) {
-      showFieldError('cita-hora', 'El médico ya tiene una cita reservada en ese horario');
-      ok = false;
-    }
+      if (errMed) throw errMed;
 
-    const { data: conflPac } = await supabaseClient
-      .from('citas')
-      .select('codigo')
-      .eq('paciente_id', paciente)
-      .eq('fecha', fecha)
-      .eq('hora', hora)
-      .not('estado', 'in', '("Cancelada","No asistió")')
-      .neq('codigo', editCodigo);
+      if (conflMed && conflMed.length > 0) {
+        showFieldError('cita-hora', 'El médico ya tiene una cita reservada en ese horario');
+        ok = false;
+      }
 
-    if (conflPac && conflPac.length > 0) {
-      showFieldError('cita-hora', 'El paciente ya cuenta con una cita en ese mismo horario');
+      // 2. Validación de solapamiento del paciente con manejo de errores
+      const { data: conflPac, error: errPac } = await supabaseClient
+        .from('citas')
+        .select('codigo')
+        .eq('paciente_id', paciente)
+        .eq('fecha', fecha)
+        .eq('hora', hora)
+        .not('estado', 'in', '("Cancelada","No asistió")')
+        .neq('codigo', editCodigo);
+
+      if (errPac) throw errPac;
+
+      if (conflPac && conflPac.length > 0) {
+        showFieldError('cita-hora', 'El paciente ya cuenta con una cita en ese mismo horario');
+        ok = false;
+      }
+    } catch (dbError) {
+      console.error("Error al validar cruce de horarios:", dbError);
+      showToast("Error de red al verificar disponibilidad de agenda", "error");
       ok = false;
     }
   }
   return ok;
 }
-
 async function guardarCita() {
+  console.log("Iniciando proceso de guardado...");
+  
+  // 1. Forzar captura manual de los valores actuales del DOM por seguridad
+  const paciente = document.getElementById('cita-paciente').value;
+  const especialidad = document.getElementById('cita-especialidad').value;
+  const medico = document.getElementById('cita-medico').value;
+  const fecha = document.getElementById('cita-fecha').value;
+  const hora = document.getElementById('cita-hora').value;
+  const prioridad = document.getElementById('cita-prioridad').value;
+  const motivo = document.getElementById('cita-motivo').value.trim();
+
+  console.log("Valores capturados:", { paciente, especialidad, medico, fecha, hora, prioridad, motivo });
+
+  // 2. Ejecutar la validación completa
   const isValid = await validarFormCita();
-  if (!isValid) { showToast('Corrija los errores', 'error'); return; }
+  if (!isValid) { 
+    showToast('Faltan campos obligatorios o el formato es incorrecto', 'error'); 
+    return; 
+  }
   
   const editCodigo = document.getElementById('cita-codigo-edit').value;
-  
   let estadoActual = 'Programada';
+  
   if (editCodigo) {
     const { data: existente } = await supabaseClient.from('citas').select('estado').eq('codigo', editCodigo).single();
     if (existente) estadoActual = existente.estado;
@@ -233,30 +272,35 @@ async function guardarCita() {
 
   const citaData = {
     codigo:       editCodigo || document.getElementById('cita-codigo').value,
-    paciente_id:  document.getElementById('cita-paciente').value,
-    especialidad: document.getElementById('cita-especialidad').value,
-    medico:       document.getElementById('cita-medico').value,
-    fecha:        document.getElementById('cita-fecha').value,
-    hora:         document.getElementById('cita-hora').value,
-    prioridad:    document.getElementById('cita-prioridad').value,
-    motivo:       document.getElementById('cita-motivo').value.trim(),
+    paciente_id:  paciente,
+    especialidad: especialidad,
+    medico:       medico,
+    fecha:        fecha,
+    hora:         hora,
+    prioridad:    prioridad,
+    motivo:       motivo,
     justificacion_prioridad: document.getElementById('cita-justificacion').value.trim() || null,
     estado:       estadoActual
   };
 
-  if (editCodigo) {
-    const { error } = await supabaseClient.from('citas').update(citaData).eq('codigo', editCodigo);
-    if (error) { showToast(`Error: ${error.message}`, 'error'); return; }
-    showToast('Cita médica actualizada', 'success');
-  } else {
-    const { error } = await supabaseClient.from('citas').insert([citaData]);
-    if (error) { showToast(`Error: ${error.message}`, 'error'); return; }
-    showToast('Cita agendada exitosamente', 'success');
-  }
+  try {
+    if (editCodigo) {
+      const { error } = await supabaseClient.from('citas').update(citaData).eq('codigo', editCodigo);
+      if (error) throw error;
+      showToast('Cita médica actualizada con éxito', 'success');
+    } else {
+      const { error } = await supabaseClient.from('citas').insert([citaData]);
+      if (error) throw error;
+      showToast('¡Cita agendada exitosamente!', 'success');
+    }
 
-  closeModal('modal-cita');
-  renderCitas();
-  updateStats();
+    closeModal('modal-cita');
+    renderCitas();
+    updateStats();
+  } catch (err) {
+    console.error("Error al insertar en Supabase:", err);
+    showToast(`Error del servidor: ${err.message}`, 'error');
+  }
 }
 
 async function renderCitas() {
@@ -306,8 +350,8 @@ async function renderCitas() {
   if (empty) empty.style.display = 'none';
 
   grid.innerHTML = filtradas.map(c => {
-    const pac      = pacientes ? pacientes.find(p => p.codigo === c.paciente_id) : null;
-    const nombre   = pac ? `${pac.nombres} ${pac.apellidos}` : '(Paciente no encontrado)';
+    const pac = pacientes ? pacientes.find(p => p.codigo === c.paciente_id) : null;
+    const nombre = pac ? `${pac.nombres} ${pac.apellidos}` : '(Paciente no encontrado)';
     const alNoNing = pac?.alergias?.length && pac.alergias[0] !== 'Ninguna';
     const priClass = c.prioridad === 'Urgente' ? 'urgente' : c.prioridad === 'Preferencial' ? 'preferencial' : '';
 
@@ -319,7 +363,6 @@ async function renderCitas() {
       if (c.estado === 'En espera')  acciones = `<a href="sala-espera.html" class="btn btn-outline btn-sm">Ver Sala →</a>`;
       if (c.estado === 'Programada' || c.estado === 'Confirmada') acciones += `<button class="btn btn-ghost btn-sm" onclick="editarCita('${c.codigo}')">✏️</button>`;
     } else {
-      // El paciente solo mantiene control manual de cancelación si la cita aún está 'Programada'
       if (c.estado === 'Programada') {
         acciones = `<button class="btn btn-danger btn-sm" onclick="pedirCancelacion('${c.codigo}')">✕ Cancelar Cita</button>`;
       }
@@ -451,7 +494,6 @@ async function updateStats() {
     }
   }
 
-  // Filtrar el contador global de estadísticas superiores si el perfil activo es de un Paciente
   const dataParaContar = userRol === 'Paciente' ? citas.filter(c => c.paciente_id === miCodigoPaciente) : citas;
   
   if (document.getElementById('st-total')) {
@@ -466,4 +508,20 @@ async function updateStats() {
   if (document.getElementById('st-urgentes')) {
     document.getElementById('st-urgentes').textContent = dataParaContar.filter(c => c.prioridad === 'Urgente' && !['Cancelada', 'No asistió', 'Atendida'].includes(c.estado)).length;
   }
+}
+// Utilidad local para evitar el error de referencia en la validación de fechas pasadas
+function todayStr() {
+  return new Date().toISOString().split('T')[0];
+}
+// ── UTILIDADES LOCALES DE FECHAS PARA EVITAR ERRORES DE REFERENCIA ──
+
+function todayStr() {
+  return new Date().toISOString().split('T')[0];
+}
+
+function formatDate(dateStr) {
+  if (!dateStr) return '—';
+  if (dateStr.includes('/')) return dateStr;
+  const d = new Date(dateStr + 'T00:00:00');
+  return d.toLocaleDateString('es-PE', { day:'2-digit', month:'2-digit', year:'numeric' });
 }

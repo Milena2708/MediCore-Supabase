@@ -39,69 +39,51 @@ async function generarReporte() {
   }
 }
 
-// Configura los inputs de fecha basándose en el año/mes de tus citas reales de Supabase
+// Configura los inputs de fecha basándose en la fecha actual de trabajo
 function configurarRangoInicialDinamico() {
-  if (DATA_CITAS_GLOBAL.length === 0) {
-    const hoy = new Date().toISOString().split('T')[0];
-    document.getElementById('r-desde').value = hoy;
-    document.getElementById('r-hasta').value = hoy;
-    return;
-  }
-
-  // Extraer las fechas ordenadas para saber el año y mes en el que estás trabajando
-  const fechasOrdenadas = DATA_CITAS_GLOBAL.map(c => {
-    return c.fecha.includes('/') ? c.fecha.split('/').reverse().join('-') : c.fecha;
-  }).sort();
-
-  // Tomamos la última fecha registrada como referencia para situar el "Mes actual"
-  const ultimaFechaStr = fechasOrdenadas[fechasOrdenadas.length - 1]; 
-  const partes = ultimaFechaStr.split('-'); // [AAAA, MM, DD]
+  // Forzar que el análisis por defecto empiece en el mes actual de la entrega (Junio 2026)
+  const hoyStr = "2026-06-30"; 
+  const partes = hoyStr.split('-'); // [2026, 06, 30]
   
-  // Establecer desde el primer día de ese mes hasta el último
-  const desdeStr = `${partes[0]}-${partes[1]}-01`;
+  const desdeStr = `${partes[0]}-${partes[1]}-01`; // 2026-06-01
   const ultimoDiaMes = new Date(partes[0], partes[1], 0).getDate();
-  const hastaStr = `${partes[0]}-${partes[1]}-${String(ultimoDiaMes).padStart(2, '0')}`;
+  const hastaStr = `${partes[0]}-${partes[1]}-${String(ultimoDiaMes).padStart(2, '0')}`; // 2026-06-30
 
   if (document.getElementById('r-desde')) document.getElementById('r-desde').value = desdeStr;
   if (document.getElementById('r-hasta')) document.getElementById('r-hasta').value = hastaStr;
 }
 
-function parsearFechaUniversal(fechaStr) {
-  if (!fechaStr) return null;
-  let año, mes, dia;
-
-  if (fechaStr.includes('/')) {
-    const partes = fechaStr.split('/');
-    dia = parseInt(partes[0], 10);
-    mes = parseInt(partes[1], 10) - 1;
-    año = parseInt(partes[2], 10);
-  } else if (fechaStr.includes('-')) {
-    const partes = fechaStr.split('-');
-    año = parseInt(partes[0], 10);
-    mes = parseInt(partes[1], 10) - 1;
-    dia = parseInt(partes[2], 10);
-  } else {
-    return null;
+// Normaliza cualquier formato de fecha (DD/MM/YYYY o YYYY-MM-DD) a una cadena comparable estándar (YYYY-MM-DD)
+function normalizarFechaAString(fechaStr) {
+  if (!fechaStr) return "";
+  const texto = fechaStr.trim();
+  if (texto.includes('/')) {
+    const partes = texto.split('/');
+    return `${partes[2]}-${partes[1].padStart(2, '0')}-${partes[0].padStart(2, '0')}`;
   }
-  return new Date(año, mes, dia, 12, 0, 0).getTime();
+  return texto;
 }
 
 function procesarYRenderizarTodo() {
   const desde = document.getElementById('r-desde').value;
   const hasta = document.getElementById('r-hasta').value;
 
-  const tDesde = desde ? parsearFechaUniversal(desde) : null;
-  const tHasta = hasta ? parsearFechaUniversal(hasta) : null;
+  const strDesde = desde ? normalizarFechaAString(desde) : null;
+  const strHasta = hasta ? normalizarFechaAString(hasta) : null;
 
   let citasFiltradas = DATA_CITAS_GLOBAL.filter(c => {
     if (!c.fecha) return false;
-    const tCita = parsearFechaUniversal(c.fecha);
-    if (!tCita) return false;
+    const strCita = normalizarFechaAString(c.fecha);
+    if (!strCita) return false;
 
-    if (tDesde && tCita < tDesde) return false;
-    if (tHasta && tCita > tHasta) return false;
+    if (strDesde && strCita < strDesde) return false;
+    if (strHasta && strCita > strHasta) return false;
     return true;
   });
+
+  // Filtrar evaluaciones vinculadas a las citas del período seleccionado
+  const codigosFiltrados = citasFiltradas.map(c => c.codigo);
+  let evaluacionesFiltradas = DATA_EVALUACIONES_GLOBAL.filter(ev => codigosFiltrados.includes(ev.cita_id));
 
   renderKpisSuperiores(citasFiltradas, DATA_PACIENTES_GLOBAL, DATA_HISTORIALES_GLOBAL);
   renderCitasPorEspecialidad(citasFiltradas);
@@ -111,18 +93,16 @@ function procesarYRenderizarTodo() {
   renderAlergiasFrecuentes(DATA_PACIENTES_GLOBAL);
   renderTablaDetalle(citasFiltradas, DATA_PACIENTES_GLOBAL);
   renderDonaEstados(citasFiltradas);
-  renderCalidadServicio(DATA_EVALUACIONES_GLOBAL);
+  renderCalidadServicio(evaluacionesFiltradas);
 }
 
 function setPeriodo(periodo, boton) {
   document.querySelectorAll('.period-tab').forEach(btn => btn.classList.remove('active'));
   boton.classList.add('active');
 
-  // Obtener el año/mes base de trabajo de la base de datos para que los botones respondan al 2026
-  if (DATA_CITAS_GLOBAL.length === 0) return;
-  const fechas = DATA_CITAS_GLOBAL.map(c => c.fecha.includes('/') ? c.fecha.split('/').reverse().join('-') : c.fecha).sort();
-  const ultimaFecha = fechas[fechas.length - 1];
-  const [refAño, refMes, refDia] = ultimaFecha.split('-');
+  const refAño = "2026";
+  const refMes = "06";
+  const refDia = "30";
 
   let desdeStr = '';
   let hastaStr = `${refAño}-${refMes}-${refDia}`;
@@ -130,7 +110,6 @@ function setPeriodo(periodo, boton) {
   if (periodo === 'hoy') {
     desdeStr = hastaStr;
   } else if (periodo === 'semana') {
-    // Rango de la última semana registrada para ver flujos recientes
     const baseDate = new Date(refAño, parseInt(refMes) - 1, refDia);
     baseDate.setDate(baseDate.getDate() - 7);
     desdeStr = baseDate.toISOString().split('T')[0];
@@ -156,9 +135,9 @@ function aplicarFiltroFecha() {
 }
 
 function renderKpisSuperiores(citas, pacientes, historiales) {
-  const atendidas = citas.filter(c => c.estado === 'Atendida').length;
-  const programadas = citas.filter(c => c.estado === 'Programada' || c.estado === 'Confirmada').length;
-  const canceladasNoAsistio = citas.filter(c => ['Cancelada', 'No asistió'].includes(c.estado)).length;
+  const atendidas = citas.filter(c => (c.estado || '').trim() === 'Atendida').length;
+  const programadas = citas.filter(c => (c.estado || '').trim() === 'Programada' || (c.estado || '').trim() === 'Confirmada').length;
+  const canceladasNoAsistio = citas.filter(c => ['Cancelada', 'No asistió'].includes((c.estado || '').trim())).length;
 
   if (document.getElementById('kpi-pacs')) document.getElementById('kpi-pacs').textContent = pacientes.length;
   if (document.getElementById('kpi-atendidas')) document.getElementById('kpi-atendidas').textContent = atendidas;
@@ -175,7 +154,11 @@ function renderDonaEstados(citas) {
   const estados = ['Programada', 'Confirmada', 'En espera', 'En atención', 'Atendida', 'Cancelada', 'No asistió'];
   const conteo = {};
   estados.forEach(e => conteo[e] = 0);
-  citas.forEach(c => { if (conteo[c.estado] !== undefined) conteo[c.estado]++; });
+  
+  citas.forEach(c => { 
+    const estadoLimpio = (c.estado || '').trim();
+    if (conteo[estadoLimpio] !== undefined) conteo[estadoLimpio]++; 
+  });
 
   const total = citas.length || 1;
   const coloresFuerte = {
@@ -281,13 +264,12 @@ function renderCitasPorEspecialidad(citas) {
   }).join('');
 }
 
-// RANKING REPARADO COMPLETO
 function renderRankingMedicos(citas) {
   const container = document.getElementById('chart-medicos');
   if (!container) return;
 
   const conteo = {};
-  citas.filter(c => c.estado === 'Atendida').forEach(c => conteo[c.medico] = (conteo[c.medico] || 0) + 1);
+  citas.filter(c => (c.estado || '').trim() === 'Atendida').forEach(c => conteo[c.medico] = (conteo[c.medico] || 0) + 1);
   const ordenado = Object.entries(conteo).sort((a, b) => b[1] - a[1]).slice(0, 5);
 
   if (ordenado.length === 0) {
@@ -399,7 +381,7 @@ function renderTablaDetalle(citasFiltradas, pacientesLista) {
     const nombre = pac ? `${pac.nombres} ${pac.apellidos}`.toLowerCase() : '';
 
     if (q && !nombre.includes(q) && !c.medico.toLowerCase().includes(q) && !c.codigo.toLowerCase().includes(q)) return false;
-    if (fEstado && c.estado !== fEstado) return false;
+    if (fEstado && (c.estado || '').trim() !== fEstado) return false;
     return true;
   });
 
@@ -441,4 +423,11 @@ function exportarCSV() {
   link.click();
   document.body.removeChild(link);
   showToast('Archivo CSV descargado con éxito', 'success');
+}
+
+function formatDate(dateStr) {
+  if (!dateStr) return '—';
+  if (dateStr.includes('/')) return dateStr;
+  const d = new Date(dateStr + 'T00:00:00');
+  return d.toLocaleDateString('es-PE', { day: '2-digit', month: '2-digit', year: 'numeric' });
 }

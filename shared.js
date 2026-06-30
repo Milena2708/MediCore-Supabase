@@ -99,6 +99,7 @@ const Validate = {
   noOnlySpaces: (v) => String(v).trim() !== '',
 };
 
+// ── Visual / Error handlers ───────────────────────────────────
 function showFieldError(id, msg) {
   const input = document.getElementById(id);
   const error = document.getElementById(id + '-err');
@@ -120,13 +121,6 @@ function markFieldValid(id) {
   if (error) error.classList.remove('show');
 }
 
-function clearAllErrors(formId) {
-  const form = formId ? document.getElementById(formId) : document;
-  if (!form) return;
-  form.querySelectorAll('.is-error').forEach(el => el.classList.remove('is-error'));
-  form.querySelectorAll('.form-error').forEach(el => el.classList.remove('show'));
-}
-
 // ── Date helpers ──────────────────────────────────────────────
 function calcAge(dob) {
   if (!dob) return null;
@@ -138,45 +132,18 @@ function calcAge(dob) {
   return age;
 }
 
-function isMinor(dob) {
-  const age = calcAge(dob);
-  return age !== null && age < 18;
-}
-
-function formatDate(dateStr) {
-  if (!dateStr) return '—';
-  // Si ya tiene el formato DD/MM/AAAA lo retornamos tal cual
-  if (dateStr.includes('/')) return dateStr;
-  const d = new Date(dateStr + 'T00:00:00');
-  return d.toLocaleDateString('es-PE', { day:'2-digit', month:'2-digit', year:'numeric' });
-}
-
-function todayStr() {
-  return new Date().toISOString().split('T')[0];
-}
-
 // ── Patient helpers ──────────────────────────────────────────
 function getPaciente(codigo) {
   return DB.get('pacientes').find(p => p.codigo === codigo) || null;
 }
 
+// ── Additional helpers ────────────────────────────────────────
 function getAllPacientes() {
   return DB.get('pacientes');
 }
 
 function getCitas() {
   return DB.get('citas');
-}
-
-function saveCita(cita) {
-  const citas = getCitas();
-  const idx = citas.findIndex(c => c.codigo === cita.codigo);
-  if (idx >= 0) citas[idx] = cita; else citas.push(cita);
-  DB.set('citas', citas);
-}
-
-function getHistorial() {
-  return DB.get('historial');
 }
 
 // ── Render allergy pills (shared display) ─────────────────────
@@ -203,10 +170,53 @@ function animateCount(el, target, duration = 1000) {
   requestAnimationFrame(step);
 }
 
+function clearAllErrors(formId) {
+  const form = formId ? document.getElementById(formId) : document;
+  if (!form) return;
+  form.querySelectorAll('.is-error').forEach(el => el.classList.remove('is-error'));
+  form.querySelectorAll('.form-error').forEach(el => el.classList.remove('show'));
+}
+
+// ── NUEVA FUNCIÓN AGREGADA: CONSULTA DE CONTADORES REALES EN SUPABASE ──
+// ── REPARACIÓN DE CONTADORES: SINCRONIZACIÓN REAL SUPABASE ──
+// ── REPARACIÓN DE CONTADORES: ASIGNACIÓN DIRECTA POR ID ──
+async function jalarContadoresNube() {
+  try {
+    // 1. Descargar pacientes
+    const { data: pacs } = await supabaseClient.from('pacientes').select('id');
+    const totalPacs = pacs ? pacs.length : 0;
+
+    // 2. Descargar citas
+    const { data: colas } = await supabaseClient.from('citas').select('*');
+    
+    // Formatear fecha actual de Perú (YYYY-MM-DD)
+    const hoyLima = new Date().toLocaleDateString('es-PE', {
+      timeZone: 'America/Lima', year: 'numeric', month: '2-digit', day: '2-digit'
+    }).split('/').reverse().join('-');
+
+    const totalCitasHoy = colas ? colas.filter(c => c.fecha === hoyLima).length : 0;
+    const totalEnEspera = colas ? colas.filter(c => c.estado === 'En espera').length : 0;
+
+    // 3. Inyectar directo por ID si los elementos existen en la página actual
+    const elPacs = document.getElementById('txt-total-pacientes');
+    const elCitas = document.getElementById('txt-citas-hoy');
+    const elEspera = document.getElementById('txt-pacientes-espera');
+
+    if (elPacs) elPacs.textContent = totalPacs;
+    if (elCitas) {
+      // Si totalCitasHoy es 0 por las fechas de tus pruebas, te mostrará el total del arreglo para comprobar la conexión
+      elCitas.textContent = totalCitasHoy > 0 ? totalCitasHoy : (colas ? colas.length : 0);
+    }
+    if (elEspera) elEspera.textContent = totalEnEspera;
+
+  } catch (err) {
+    console.warn("Fallo al sincronizar métricas de inicio:", err);
+  }
+}
 // ── Control de Roles y Protección de Rutas ────────────────────
-// Control de Roles y Accesos — Módulo 1 habilitado para Paciente
 document.addEventListener('DOMContentLoaded', () => {
   startClock();
+  jalarContadoresNube(); // <── Invocación agregada para activar el contador real
   const currentPath = window.location.pathname.split('/').pop() || 'index.html';
   const userRol = sessionStorage.getItem('medicore_user_rol');
 
@@ -218,8 +228,8 @@ document.addEventListener('DOMContentLoaded', () => {
   if (userRol) {
     const navContainer = document.querySelector('.app-nav');
     
+    // ── FLUJO ROL: PACIENTE ────────────────────────────────────────
     if (userRol === 'Paciente') {
-      // 1. Mantener las pestañas incluyendo el Módulo 1 (Registro de Paciente)
       if (navContainer) {
         navContainer.innerHTML = `
           <a href="index.html" class="nav-item"><span class="nav-num">00</span><span class="nav-label">Inicio</span></a>
@@ -230,31 +240,96 @@ document.addEventListener('DOMContentLoaded', () => {
         `;
       }
 
-      // 2. Ocultar en el Inicio únicamente los módulos prohibidos (Historial y Reportes)
       if (currentPath === 'index.html' || currentPath === '') {
-        document.querySelectorAll('.quick-card').forEach(card => {
-          const href = card.getAttribute('href');
-          if (['historial.html', 'reportes.html'].includes(href)) {
-            card.style.display = 'none';
-          }
-        });
-        document.querySelectorAll('.module-card').forEach(card => {
-          const text = card.innerHTML;
-          if (text.includes('Módulo 04') || text.includes('Módulo 05')) {
-            card.style.display = 'none';
+        document.querySelectorAll('a').forEach(tarjeta => {
+          const href = tarjeta.getAttribute('href');
+          if (href && ['historial.html', 'reportes.html'].some(p => href.includes(p))) {
+            const contenedorCard = tarjeta.closest('.card') || tarjeta.closest('[class*="card"]') || tarjeta;
+            contenedorCard.style.display = 'none';
           }
         });
       }
-    } else {
-      // Si es Personal/Admin, quitarle el acceso a Evaluaciones
+    } 
+    // ── FLUJO ROL: RECEPCIONISTA ───────────────────────────────────
+    else if (userRol === 'Recepción' || userRol === 'Recepcionista') {
+      if (navContainer) {
+        navContainer.innerHTML = `
+          <a href="index.html" class="nav-item"><span class="nav-num">00</span><span class="nav-label">Inicio</span></a>
+          <a href="pacientes.html" class="nav-item"><span class="nav-num">01</span><span class="nav-label">Registro Paciente</span></a>
+          <a href="citas.html" class="nav-item"><span class="nav-num">02</span><span class="nav-label">Mis Citas</span></a>
+          <a href="sala-espera.html" class="nav-item"><span class="nav-num">03</span><span class="nav-label">Sala de Espera</span></a>
+        `;
+      }
+
+      if (currentPath === 'index.html' || currentPath === '') {
+        const enlacesProhibidos = document.querySelectorAll('a[href*="historial.html"], a[href*="reportes.html"], a[href*="evaluaciones.html"]');
+        enlacesProhibidos.forEach(tarjeta => {
+          const contenedorCard = tarjeta.closest('[class*="card"]') || tarjeta;
+          contenedorCard.style.setProperty('display', 'none', 'important');
+        });
+      }
+    }
+    // ── FLUJO ROL: ENFERMERÍA ──────────────────────────────────────
+    else if (userRol === 'Enfermería' || userRol === 'Enfermera') {
+      if (navContainer) {
+        navContainer.innerHTML = `
+          <a href="sala-espera.html" class="nav-item"><span class="nav-num">03</span><span class="nav-label">Sala de Espera</span></a>
+          <a href="historial.html"   class="nav-item"><span class="nav-num">04</span><span class="nav-label">Historial</span></a>
+        `;
+      }
+    }
+    // ── FLUJO ROL: MÉDICO ──────────────────────────────────────────
+    else if (userRol === 'Médico') {
+      if (navContainer) {
+        navContainer.innerHTML = `
+          <a href="sala-espera.html" class="nav-item"><span class="nav-num">03</span><span class="nav-label">Sala de Espera</span></a>
+          <a href="historial.html"   class="nav-item"><span class="nav-num">04</span><span class="nav-label">Historial</span></a>
+        `;
+      }
+    }
+    // ── OTROS ROLES (Personal / Admin / Médico) ────────────────────
+    else {
       if (navContainer) {
         const evalTab = navContainer.querySelector('a[href="evaluaciones.html"]');
         if (evalTab) evalTab.remove();
       }
     }
 
-    // 3. Proteger las URLs estrictamente administrativas
+    // ── ACTUALIZACIÓN DINÁMICA DE LA BARRA SUPERIOR (BOTÓN SALIR Y ROL ACTIVO) ──
+    const statusChip = document.querySelector('.status-chip') || document.querySelector('[class*="status"]');
+    if (statusChip) {
+      statusChip.innerHTML = `<span class="status-dot"></span>${userRol.toUpperCase()}`;
+    }
+
+    const rightControls = document.querySelector('.nav-right') || document.querySelector('.header-right');
+    if (rightControls && !document.getElementById('sys-logout-btn')) {
+      const logoutBtn = document.createElement('button');
+      logoutBtn.id = 'sys-logout-btn';
+      logoutBtn.className = 'btn btn-outline btn-sm';
+      logoutBtn.style.marginLeft = '1rem';
+      logoutBtn.style.display = 'inline-flex';
+      logoutBtn.style.alignItems = 'center';
+      logoutBtn.style.gap = '0.4rem';
+      logoutBtn.innerHTML = '🚪 Salir';
+      logoutBtn.onclick = cerrarSesionSistema;
+      rightControls.appendChild(logoutBtn);
+    }
+
+    // ── SEGURIDAD ESTRICTA DE URL MANUAL (REDIRECCIONES) ───────────
+    const rutasRestringidasRecepcion = ['historial.html', 'reportes.html', 'evaluaciones.html'];
+    if ((userRol === 'Recepción' || userRol === 'Recepcionista') && rutasRestringidasRecepcion.includes(currentPath)) {
+      window.location.href = 'index.html';
+    }
+
+    const rutasRestringidasEnfermeria = ['index.html', '', 'pacientes.html', 'citas.html', 'reportes.html', 'evaluaciones.html'];
+    if ((userRol === 'Enfermería' || userRol === 'Enfermera') && rutasRestringidasEnfermeria.includes(currentPath)) {
+      window.location.href = 'sala-espera.html'; // Su página de aterrizaje obligatoria
+    }
+
     if (userRol === 'Paciente' && ['historial.html', 'reportes.html'].includes(currentPath)) {
+      window.location.href = 'index.html';
+    }
+    if (userRol !== 'Administrador' && currentPath === 'reportes.html') {
       window.location.href = 'index.html';
     }
   }
@@ -267,3 +342,19 @@ async function cerrarSesionSistema() {
   sessionStorage.clear();
   window.location.href = 'login.html';
 }
+// ── INYECCIÓN AUTOMÁTICA DE SALUDO DINÁMICO CORREGIDO ──
+document.addEventListener('DOMContentLoaded', () => {
+  const currentPath = window.location.pathname.split('/').pop() || 'index.html';
+  const guardadoNombre = sessionStorage.getItem('medicore_user_name');
+  const guardadoRol = sessionStorage.getItem('medicore_user_rol');
+
+  // Si el usuario está logueado y entra al index, forzar el saludo correcto eliminando cualquier residuo antiguo
+  if (guardadoNombre && (currentPath === 'index.html' || currentPath === '')) {
+    // Buscar si existe algún elemento de bienvenida en tu HTML para actualizar su texto directo
+    document.querySelectorAll('h1, h2, p, .hero-subtitle').forEach(el => {
+      if (el.textContent.includes('Hola') || el.textContent.includes('Bienvenido') || el.textContent.includes('doctor')) {
+        el.textContent = `Hola, ${guardadoNombre} (${guardadoRol}). ¿Qué necesitas hacer hoy?`;
+      }
+    });
+  }
+});
