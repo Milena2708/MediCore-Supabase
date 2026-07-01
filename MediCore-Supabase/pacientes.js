@@ -307,6 +307,18 @@ async function renderTable() {
         return;
     }
 
+    // ── ADICIÓN DE CONTROL DE PRIVACIDAD: FILTRAR SI EL ROL ACTIVO ES PACIENTE ──
+    const userRol = sessionStorage.getItem('medicore_user_rol');
+    if (userRol === 'Paciente') {
+        const { data: userData } = await supabaseClient.auth.getUser();
+        const miCorreo = userData?.user?.email;
+        pacientes = pacientes.filter(p => p.correo === miCorreo);
+        
+        // Ocultar barras de búsqueda global para los pacientes
+        const searchInputBox = document.querySelector('.search-bar');
+        if (searchInputBox) searchInputBox.style.display = 'none';
+    }
+
     let filtrados = pacientes.filter(p => {
         const nombreCompleto = `${p.nombres} ${p.apellidos}`.toLowerCase();
         if (q && !nombreCompleto.includes(q) && !p.documento.includes(q) && !p.codigo.toLowerCase().includes(q)) return false;
@@ -331,6 +343,14 @@ async function renderTable() {
             ? `<span style="color:var(--red);font-size:.7rem;font-weight:600">⚠️ ${p.alergias.join(', ')}</span>`
             : `<span style="color:var(--gray-400);font-size:.72rem">Ninguna</span>`;
 
+        // Si es el rol Paciente, limitamos sus acciones de edición/eliminación global
+        const accionesHtml = userRol === 'Paciente'
+            ? `<button class="btn btn-ghost btn-sm" onclick="verDetalle('${p.codigo}')" title="Ver mi ficha">👁️ Ficha</button>
+               <button class="btn btn-ghost btn-sm" onclick="editarPaciente('${p.codigo}')" title="Actualizar mis datos">✏️ Editar</button>`
+            : `<button class="btn btn-ghost btn-sm" onclick="verDetalle('${p.codigo}')" title="Ver ficha">👁️</button>
+               <button class="btn btn-ghost btn-sm" onclick="editarPaciente('${p.codigo}')" title="Editar">✏️</button>
+               <button class="btn btn-ghost btn-sm" style="color:var(--red);" onclick="eliminarPaciente('${p.codigo}')" title="Eliminar">🗑️</button>`;
+
         return `<tr>
             <td class="td-code">${p.codigo}</td>
             <td>
@@ -351,25 +371,29 @@ async function renderTable() {
             </td>
             <td>${p.telefono}</td>
             <td>${alText}</td>
-            <td>
-                <div class="actions">
-                    <button class="btn btn-ghost btn-sm" onclick="verDetalle('${p.codigo}')" title="Ver ficha">👁️</button>
-                    <button class="btn btn-ghost btn-sm" onclick="editarPaciente('${p.codigo}')" title="Editar">✏️</button>
-                    <button class="btn btn-ghost btn-sm" style="color:var(--red);" onclick="eliminarPaciente('${p.codigo}')" title="Eliminar">🗑️</button>
-                </div>
-            </td>
+            <td><div class="actions">${accionesHtml}</div></td>
         </tr>`;
     }).join('');
 }
 
 async function renderRecientes() {
+    const userRol = sessionStorage.getItem('medicore_user_rol');
+    const container = document.getElementById('lista-recientes');
+    if (!container) return;
+
+    // ── ADICIÓN DE CONTROL DE PRIVACIDAD: OCULTAR TARJETA DE RECIENTES AL PACIENTE ──
+    if (userRol === 'Paciente') {
+        const sidebarCard = container.closest('.card') || container;
+        if (sidebarCard) sidebarCard.style.display = 'none';
+        return;
+    }
+
     let { data: pacientes, error } = await supabaseClient
         .from('pacientes')
         .select('*')
         .order('fecha_creacion', { ascending: false })
         .limit(4);
 
-    const container = document.getElementById('lista-recientes');
     if (error || !pacientes || !pacientes.length) {
         container.innerHTML = '<div style="font-size:.74rem;color:var(--gray-400);padding:1rem;">No hay registros recientes.</div>';
         return;
