@@ -1,0 +1,350 @@
+// ══════════════════════════════════════════
+//  sala-espera.js — Gestión de Cola en Tiempo Real
+//  Conectado a la tabla operativa: sala_espera (Opción B)
+//  Segregación de Roles Inteligente y Control Total de Permisos
+// ══════════════════════════════════════════
+
+const PRIO_ORD = { Urgente: 0, Preferencial: 1, Normal: 2 };
+
+document.addEventListener('DOMContentLoaded', async () => {
+  await cargarMedicosSelect();
+  await renderSala();
+  setInterval(renderSala, 15000); // Auto-refresh cada 15 segundos para simular tiempo real
+});
+
+// Carga dinámica de médicos basada en las citas de la nube
+async function cargarMedicosSelect() {
+  const { data: citas } = await supabaseClient.from('citas').select('medico');
+  if (!citas) return;
+  
+  const medicos = [...new Set(citas.map(c => c.medico).filter(Boolean))];
+  const sel     = document.getElementById('f-medico');
+  if (sel) {
+    sel.innerHTML = '<option value="">Todos los médicos</option>';
+    medicos.forEach(m => {
+      const o = document.createElement('option');
+      o.value = o.textContent = m;
+      sel.appendChild(o);
+    });
+  }
+}
+
+async function renderSala() {
+  const fMed = document.getElementById('f-medico').value;
+  const fEsp = document.getElementById('f-especialidad').value;
+  let fEst = document.getElementById('f-estado-sala').value;
+
+  if (fEst === 'Atendido') fEst = 'Atendida';
+
+  // 1. Descargar la data exclusivamente desde la tabla operativa 'sala_espera' enlazando su cita maestra
+  const { data: cola, error: errCola } = await supabaseClient.from('sala_espera').select('*, citas(*)');
+  const { data: pacientes, error: errPacs } = await supabaseClient.from('pacientes').select('*');
+
+  if (errCola || !cola) return;
+
+  // IDENTIFICACIÓN DE ROL: Extraer código del paciente activo haciendo match con su correo
+  const userRol = sessionStorage.getItem('medicore_user_rol');
+  let miCodigoPaciente = null;
+
+  if (userRol === 'Paciente') {
+    const { data: { user } } = await supabaseClient.auth.getUser();
+    if (user && pacientes) {
+      const miFicha = pacientes.find(p => p.correo === user.email);
+      if (miFicha) miCodigoPaciente = miFicha.codigo;
+    }
+    // Ocultar los filtros de gestión avanzada que confunden al paciente en la UI
+    const filtrosMedEsp = document.getElementById('f-medico')?.parentElement;
+    if (filtrosMedEsp) filtrosMedEsp.style.display = 'none';
+  }
+
+  // Mapear los datos unificados leyendo el estado y los tiempos de atención reales de 'sala_espera'
+  let filtradas = cola.map(item => {
+    const c = item.citas || {};
+    return {
+      ...c,
+      estado: item.estado, 
+      hora_llegada: item.hora_llegada, 
+      hora_inicio_atencion: item.hora_inicio_atencion, 
+      prioridad_num: item.orden_prioridad
+    };
+  });
+
+  // Filtrar según los criterios de búsqueda activos de la UI
+  filtradas = filtradas.filter(c => {
+    if (!c.codigo) return false;
+    
+    // REGLA DE PRIVACIDAD: Si el rol es Paciente, únicamente puede visualizarse a sí mismo en la cola
+    if (userRol === 'Paciente' && c.paciente_id !== miCodigoPaciente) return false;
+    
+    if (!['En espera', 'En atención', 'Atendida', 'No asistió'].includes(c.estado)) return false;
+    if (fMed && c.medico !== fMed) return false;
+    if (fEsp && c.especialidad !== fEsp) return false;
+    if (fEst && c.estado !== fEst) return false;
+    return true;
+  });
+
+  // Ordenar usando el peso numérico de prioridad de tu tabla 'sala_espera'
+  filtradas.sort((a, b) => {
+    const pA = PRIO_ORD[a.prioridad] ?? 2, pB = PRIO_ORD[b.prioridad] ?? 2;
+    if (pA !== pB) return pA - pB;
+    return (a.hora_llegada || '99:99').localeCompare(b.hora_llegada || '99:99');
+  });
+
+  const lista = document.getElementById('sala-lista');
+  const empty = document.getElementById('empty-sala');
+
+  updateStats(filtradas);
+  updateSidebar(filtradas, pacientes);
+
+  if (!filtradas.length) { 
+    if (lista) lista.innerHTML = ''; 
+    if (empty) empty.style.display = 'block'; 
+    return; 
+  }
+  if (empty) empty.style.display = 'none';
+
+  let turnoNum = 0;
+  if (lista) {
+    lista.innerHTML = filtradas.map((c) => {
+      const pac = pacientes ? pacientes.find(p => p.codigo === c.paciente_id) : null;
+      const nombre = pac ? `${pac.nombres} ${pac.apellidos}` : '(Paciente no encontrado)';
+      const priClass = (c.prioridad || '').toLowerCase();
+      const alNoNing = pac?.alergias?.length && pac.alergias[0] !== 'Ninguna';
+      const edad = pac ? calcAge(pac.fecha_nacimiento) : '';
+
+      if (c.estado === 'En espera') turnoNum++;
+      const numDisplay = c.estado === 'En atención' ? '🩺' : c.estado === 'Atendida' ? '✓' : c.estado === 'No asistió' ? '✗' : turnoNum;
+
+      // ── SISTEMA DE ACCIONES Y BOTONES POR SEGREGACIÓN DE ROL ──
+      let acciones = '';
+
+      if (userRol === 'Administrador') {
+        if (c.estado === 'En espera') {
+          acciones = `
+            <button class="btn btn-success btn-sm" onclick="pasarAtencion('${c.codigo}')">🩺 Atender</button>
+            <button class="btn btn-danger btn-sm"  onclick="pedirNoAsistio('${c.codigo}')">✗ No asistió</button>`;
+        } else if (c.estado === 'En atención') {
+          acciones = `<button class="btn btn-primary btn-sm" onclick="pedirAtendido('${c.codigo}')">✅ Finalizar</button>`;
+        } else if (c.estado === 'Atendida') {
+          acciones = `<a href="historial.html?cita=${c.codigo}" class="btn btn-outline btn-sm">📋 Registrar historial</a>`;
+        }
+      } 
+      // CORRECCIÓN: Reconocer el rol de "Enfermería" de forma exacta con tilde
+      else if (userRol === 'Enfermería' || userRol === 'Enfermera') {
+        // La Enfermera gestiona el inicio del circuito (Triaje/Preparación)
+      if (c.estado === 'En espera') {
+        acciones = `
+         <button class="btn btn-success btn-sm" onclick="pasarAtencion('${c.codigo}')">🩺 Atender</button>
+         <button class="btn btn-danger btn-sm"  onclick="pedirNoAsistio('${c.codigo}')">✗ No asistió</button>`;
+        } else if (c.estado === 'En atención') {
+          acciones = `<span style="font-size:.75rem;color:var(--gray-400)">En atención médica...</span>`;
+        } else {
+    acciones = `<span style="font-size:.75rem;color:var(--gray-400)">Turno cerrado</span>`;
+  }
+}
+      // BUSCA ESTO EN TU SALA-ESPERA.JS:
+else if (userRol === 'Médico') {
+  // El Médico es el único rol operativo facultado para el cierre de la consulta
+  if (c.estado === 'En atención') {
+    acciones = `<button class="btn btn-primary btn-sm" onclick="pedirAtendido('${c.codigo}')">✅ Finalizar Consulta</button>`;
+  } else if (c.estado === 'Atendida') {
+    acciones = `<a href="historial.html?cita=${c.codigo}" class="btn btn-outline btn-sm">📋 Registrar historial</a>`;
+  } else if (c.estado === 'En espera') {
+    // CORRECCIÓN: El mensaje de triaje solo sale si el paciente de verdad está esperando en la cola
+    acciones = `<span style="font-size:.75rem;color:var(--gray-400)">Esperando triaje técnico</span>`;
+  } else {
+    // Si no asistió, se muestra el estado definitivo de forma limpia
+    acciones = `<span style="font-size:.75rem;color:var(--gray-400)">Inasistencia concluida</span>`;
+  }
+}
+      else {
+        // Recepcionista o Paciente: Modo Pasivo de Solo Lectura (Sin botones interactivos)
+        if (c.estado === 'En espera') acciones = `<span style="font-size:.78rem; color:var(--gray-500); font-weight:600">⏳ En cola de espera</span>`;
+        if (c.estado === 'En atención') acciones = `<span style="font-size:.78rem; color:var(--blue); font-weight:600">🩺 En evaluación...</span>`;
+        if (c.estado === 'Atendida') acciones = `<span style="font-size:.78rem; color:var(--green); font-weight:600">✓ Consulta concluida</span>`;
+        if (c.estado === 'No asistió') acciones = `<span style="font-size:.78rem; color:var(--red); font-weight:600">✗ Inasistencia marcada</span>`;
+      }
+
+      const estadoClass = c.estado === 'En atención' ? 'en-atencion' : c.estado === 'Atendida' ? 'atendido' : '';
+      
+      return `<div class="turno-card ${priClass} ${estadoClass}">
+        <div class="turno-num ${priClass}">${numDisplay}</div>
+        <div class="turno-body">
+          <div class="turno-header">
+            <span class="turno-nombre">${nombre}</span>
+            <span class="badge badge-${c.estado === 'En espera' ? 'espera' : c.estado === 'En atención' ? 'atencion' : c.estado === 'Atendida' ? 'atendida' : c.estado === 'No asistió' ? 'noasistio' : c.estado.toLowerCase()}">${c.estado}</span>
+            <span class="badge badge-${priClass}">${c.prioridad}</span>
+          </div>
+          <div class="turno-meta">
+            <span>👨‍⚕️ ${c.medico}</span>
+            <span>🏥 ${c.especialidad}</span>
+            <span>🕐 Cita: ${c.hora}</span>
+            ${pac ? `<span>🎂 ${edad} años</span>` : ''}
+          </div>
+          <div class="turno-motivo">${c.motivo}</div>
+          ${alNoNing ? `<div class="cita-allergy" style="margin-top:.4rem">⚠️ Alergias: ${pac.alergias.join(', ')}</div>` : ''}
+          <div class="turno-tiempos">
+            <span class="turno-tiempo-chip">📅 ${formatDate(c.fecha)}</span>
+            ${c.hora_llegada ? `<span class="turno-tiempo-chip llegada">🚶 Llegó: ${c.hora_llegada}</span>` : ''}
+            ${c.hora_inicio_atencion ? `<span class="turno-tiempo-chip atencion">🩺 Atención: ${c.hora_inicio_atencion}</span>` : ''}
+          </div>
+        </div>
+        <div class="turno-acciones">${acciones}</div>
+      </div>`;
+    }).join('');
+  }
+}
+
+function updateStats(citas) {
+  if (document.getElementById('st-urgentes')) {
+    document.getElementById('st-urgentes').textContent = citas.filter(c => c.prioridad === 'Urgente' && c.estado === 'En espera').length;
+  }
+  if (document.getElementById('st-preferencial')) {
+    document.getElementById('st-preferencial').textContent = citas.filter(c => c.prioridad === 'Preferencial' && c.estado === 'En espera').length;
+  }
+  if (document.getElementById('st-espera')) {
+    document.getElementById('st-espera').textContent = citas.filter(c => c.estado === 'En espera').length;
+  }
+  if (document.getElementById('st-atencion')) {
+    document.getElementById('st-atencion').textContent = citas.filter(c => c.estado === 'En atención').length;
+  }
+  if (document.getElementById('st-atendidos')) {
+    document.getElementById('st-atendidos').textContent = citas.filter(c => c.estado === 'Atendida').length;
+  }
+}
+
+function updateSidebar(citas, pacientes) {
+  const enAtencion = citas.find(c => c.estado === 'En atención');
+  
+  if (document.getElementById('ticker-num')) {
+    if (enAtencion) {
+      const pac = pacientes ? pacientes.find(p => p.codigo === enAtencion.paciente_id) : null;
+      document.getElementById('ticker-num').textContent = enAtencion.codigo;
+      document.getElementById('ticker-pac').textContent = pac ? `${pac.nombres} ${pac.apellidos}` : '—';
+      document.getElementById('ticker-esp').textContent = `${enAtencion.especialidad} · ${enAtencion.medico}`;
+    } else {
+      document.getElementById('ticker-num').textContent = '—';
+      document.getElementById('ticker-pac').textContent = 'Ninguno';
+      document.getElementById('ticker-esp').textContent = 'Sin consultas activas';
+    }
+  }
+
+  const total = citas.length;
+  if (document.getElementById('donut-svg')) {
+    const espera   = citas.filter(c => c.estado === 'En espera').length;
+    const atencion = citas.filter(c => c.estado === 'En atención').length;
+    const atend    = citas.filter(c => c.estado === 'Atendida').length;
+    const noAsist  = citas.filter(c => c.estado === 'No asistió').length;
+
+    if (document.getElementById('resumen-dia')) {
+      document.getElementById('resumen-dia').innerHTML = `
+        <div class="resumen-item"><span class="resumen-label">Total en sala</span><span class="resumen-val">${total}</span></div>
+        <div class="resumen-item"><span class="resumen-label">En espera</span><span class="resumen-val" style="color:var(--teal)">${espera}</span></div>
+        <div class="resumen-item"><span class="resumen-label">En atención</span><span class="resumen-val" style="color:var(--orange)">${atencion}</span></div>
+        <div class="resumen-item"><span class="resumen-label">Atendidos</span><span class="resumen-val" style="color:var(--green)">${atend}</span></div>
+        <div class="resumen-item"><span class="resumen-label">No asistió</span><span class="resumen-val" style="color:var(--gray-400)">${noAsist}</span></div>`;
+    }
+  }
+
+  const proximos = citas.filter(c => c.estado === 'En espera').slice(0, 3);
+  const pEl      = document.getElementById('proximos-lista');
+  if (!pEl) return;
+  if (!proximos.length) { pEl.innerHTML = '<div style="font-size:.75rem;color:var(--gray-400);padding:.5rem 0">Sin pacientes en cola</div>'; return; }
+  
+  pEl.innerHTML = proximos.map((c, i) => {
+    const pac = pacientes ? pacientes.find(p => p.codigo === c.paciente_id) : null;
+    const nombre = pac ? `${pac.nombres} ${pac.apellidos}` : '—';
+    const priColor = c.prioridad === 'Urgente' ? 'var(--red)' : c.prioridad === 'Preferencial' ? 'var(--orange)' : 'var(--blue)';
+    return `
+      <div style="display:flex;align-items:center;gap:.65rem;padding:.65rem 0;border-bottom:1px solid var(--gray-100)">
+        <div style="width:28px;height:28px;border-radius:50%;background:${priColor};color:white;display:flex;align-items:center;justify-content:center;font-size:.7rem;font-weight:700;flex-shrink:0">${i + 1}</div>
+        <div>
+          <div style="font-size:.8rem;font-weight:600;color:var(--gray-900)">${nombre}</div>
+          <div style="font-size:.68rem;color:var(--gray-400)">${c.especialidad} · ${c.hora}</div>
+        </div>
+      </div>`;
+  }).join('');
+}
+
+async function pasarAtencion(codigo) {
+  const { data: activos } = await supabaseClient.from('sala_espera').select('*, citas(*)').eq('estado', 'En atención');
+  const { data: citaMaestra } = await supabaseClient.from('citas').select('medico').eq('codigo', codigo).single();
+
+  const yaEnAtencion = activos ? activos.find(x => x.citas?.medico === citaMaestra?.medico) : null;
+  if (yaEnAtencion) { showToast(`El médico ${citaMaestra.medico} ya tiene un paciente en atención`, 'warn'); return; }
+
+  const horaAhora = new Date().toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit' });
+
+  await supabaseClient.from('sala_espera').update({ estado: 'En atención', hora_inicio_atencion: horaAhora }).eq('cita_id', codigo);
+  await supabaseClient.from('citas').update({ estado: 'En atención' }).eq('codigo', codigo);
+
+  showToast('Paciente ingresó a consultorio', 'success');
+  await renderSala();
+}
+
+function pedirNoAsistio(codigo) {
+  document.getElementById('noasistio-codigo').value = codigo;
+  openModal('modal-noasistio');
+}
+
+async function confirmarNoAsistio() {
+  const codigo = document.getElementById('noasistio-codigo').value;
+
+  await supabaseClient.from('sala_espera').update({ estado: 'No asistió' }).eq('cita_id', codigo);
+  await supabaseClient.from('citas').update({ estado: 'No asistió' }).eq('codigo', codigo);
+
+  closeModal('modal-noasistio');
+  showToast('Marcado como No asistió', 'warn');
+  await renderSala();
+}
+
+function pedirAtendido(codigo) {
+  document.getElementById('atendido-codigo').value = codigo;
+  const btnH = document.getElementById('btn-ir-historial');
+  if (btnH) btnH.style.display = 'none';
+  openModal('modal-a-historial');
+}
+
+async function confirmarAtendido() {
+  const codigo = document.getElementById('atendido-codigo').value;
+  const horaFin = new Date().toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit' });
+  
+  const { error: errSala } = await supabaseClient
+    .from('sala_espera')
+    .update({ estado: 'Atendida', hora_fin: horaFin })
+    .eq('cita_id', codigo);
+
+  if (errSala) {
+    showToast(`Error en sala: ${errSala.message}`, 'error');
+    return;
+  }
+
+  await supabaseClient.from('citas').update({ estado: 'Atendida' }).eq('codigo', codigo);
+
+  const btnH = document.getElementById('btn-ir-historial');
+  if (btnH) {
+    btnH.href = `historial.html?cita=${codigo}`;
+    btnH.style.display = 'inline-flex';
+  }
+  
+  showToast('Consulta finalizada con éxito.', 'success');
+  await renderSala();
+}
+
+// ── UTILIDADES DE SEGURIDAD LOCALES PARA EVITAR CAÍDAS DE RENDERIZADO ──
+function calcAge(dob) {
+  if (!dob) return null;
+  const today = new Date();
+  const birth = new Date(dob);
+  let age = today.getFullYear() - birth.getFullYear();
+  const m = today.getMonth() - birth.getMonth();
+  if (m < 0 || (m === 0 && today.getDate() < birth.getDate())) age--;
+  return age;
+}
+
+function formatDate(dateStr) {
+  if (!dateStr) return '—';
+  if (dateStr.includes('/')) return dateStr;
+  const d = new Date(dateStr + 'T00:00:00');
+  return d.toLocaleDateString('es-PE', { day:'2-digit', month:'2-digit', year:'numeric' });
+}
